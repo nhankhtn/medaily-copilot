@@ -46,7 +46,20 @@
     return cleanText(clone, maxChars);
   }
 
-  /** Facebook / Messenger — best-effort visible chat thread. */
+  function isInsideComposerChrome(node) {
+    if (!node || !node.closest) return false;
+    return Boolean(
+      node.closest("#medaily-copilot-root") ||
+        node.closest('[contenteditable="true"]') ||
+        node.closest('[role="textbox"]') ||
+        node.closest('[aria-label*="Type a message" i]') ||
+        node.closest('[aria-label*="Nhập tin nhắn" i]') ||
+        node.closest('[aria-label*="Message" i][contenteditable]') ||
+        node.closest('form[method="POST"]')
+    );
+  }
+
+  /** Facebook / Messenger — best-effort visible chat thread (exclude composer). */
   function extractFacebook() {
     const host = hostOf();
     const isMessenger = host === "messenger.com" || host.endsWith(".messenger.com");
@@ -58,50 +71,91 @@
     if (!isFb) return null;
 
     const panes = [
+      document.querySelector('[aria-label*="Conversation with" i]'),
+      document.querySelector('[aria-label*="Message list" i]'),
+      document.querySelector('[aria-label*="Messages in conversation" i]'),
+      document.querySelector('[aria-label*="Tin nhắn trong cuộc trò chuyện" i]'),
       document.querySelector('[aria-label*="Conversation" i]'),
       document.querySelector('[aria-label*="Messages" i]'),
       document.querySelector('[aria-label*="Tin nhắn" i]'),
-      document.querySelector('[role="main"]'),
       document.querySelector('[data-pagelet*="MWThread"]'),
+      document.querySelector('[data-pagelet*="MWInboxDetail"]'),
       document.querySelector('[data-pagelet*="ChatTab"]'),
+      document.querySelector('[role="main"]'),
     ].filter(Boolean);
 
     let thread = "";
     for (const pane of panes) {
-      const rows = pane.querySelectorAll(
-        '[role="row"], [data-scope="messages_table"] > div, div[dir="auto"]'
-      );
+      const rows = [
+        ...pane.querySelectorAll(
+          '[role="row"], [data-scope="messages_table"] > div, div[role="listitem"], div[dir="auto"]'
+        ),
+      ];
       const lines = [];
-      rows.forEach((row) => {
-        const t = cleanText(row, 400);
-        if (t.length > 1 && t.length < 800) lines.push(t);
-      });
+      for (const row of rows) {
+        if (isInsideComposerChrome(row)) continue;
+        // Prefer leaf-ish message text, skip huge chrome blocks.
+        const t = cleanText(row, 600);
+        if (t.length < 2) continue;
+        if (t.length > 1200) continue;
+        // Skip pure UI chrome.
+        if (
+          /^(send|gửi|press enter|nhấn enter|type a message|nhập tin nhắn|open more|xem thêm)/i.test(
+            t
+          )
+        ) {
+          continue;
+        }
+        lines.push(t);
+      }
       const uniq = [];
       const seen = new Set();
       for (const line of lines) {
-        const key = line.slice(0, 80);
+        const key = line.slice(0, 100).toLowerCase();
         if (seen.has(key)) continue;
         seen.add(key);
         uniq.push(line);
       }
-      thread = uniq.slice(-40).join("\n");
-      if (thread.length > 80) break;
+      // Keep last ~50 message-ish lines.
+      thread = uniq.slice(-50).join("\n");
+      if (thread.length >= 40) break;
     }
 
-    if (!thread) {
-      const main = document.querySelector('[role="main"]');
-      thread = cleanText(main, MAX_THREAD);
+    if (!thread || thread.length < 40) {
+      // Broader fallback: visible main text, strip composer.
+      const main =
+        document.querySelector('[data-pagelet*="MWThread"]') ||
+        document.querySelector('[role="main"]');
+      if (main) {
+        const clone = main.cloneNode(true);
+        clone
+          .querySelectorAll(
+            '[contenteditable="true"], [role="textbox"], script, style, noscript, svg, #medaily-copilot-root'
+          )
+          .forEach((n) => n.remove());
+        thread = cleanText(clone, MAX_THREAD);
+      }
     }
 
     const peer =
-      document.querySelector('h1 span, h2 span, [role="main"] h1, [role="main"] h2')
-        ?.textContent?.trim() || "";
+      document
+        .querySelector(
+          'h1 span, h2 span, [role="main"] h1, [role="main"] h2, [aria-label*="Conversation with" i]'
+        )
+        ?.textContent?.trim() ||
+      document
+        .querySelector('[aria-label*="Conversation with" i]')
+        ?.getAttribute("aria-label")
+        ?.replace(/^Conversation with\s+/i, "")
+        ?.trim() ||
+      "";
 
+    const trimmed = thread.slice(0, MAX_THREAD).trim();
     return {
       kind: isMessenger ? "messenger" : "facebook",
       label: isMessenger ? "Messenger" : "Facebook",
       subject: peer || undefined,
-      thread: thread.slice(0, MAX_THREAD) || undefined,
+      thread: trimmed || undefined,
       canCompose: true,
     };
   }
@@ -234,24 +288,88 @@
     el.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
+  function readComposerText(el) {
+    if (!el) return "";
+    if (el.isContentEditable) {
+      return (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
+    }
+    return String(el.value || "").replace(/\s+/g, " ").trim();
+  }
+
+  function clearComposer(el) {
+    if (!el) return;
+    el.focus();
+    if (el.isContentEditable) {
+      try {
+        document.execCommand("selectAll", false, null);
+        document.execCommand("delete", false, null);
+      } catch {
+        // fall through
+      }
+      // Hard replace so FB/Messenger never appends to leftover text.
+      while (el.firstChild) el.removeChild(el.firstChild);
+      try {
+        el.dispatchEvent(
+          new InputEvent("input", {
+            bubbles: true,
+            composed: true,
+            data: "",
+            inputType: "deleteContentBackward",
+          })
+        );
+      } catch {
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      return;
+    }
+    setNativeValue(el, "");
+  }
+
+  /**
+   * Replace composer contents (never append). Skips if already equals draft.
+   * @returns {{ok: boolean, element?: Element, skipped?: boolean, error?: string}}
+   */
   function insertIntoComposer(text) {
     const el = findComposer();
     if (!el) {
       return { ok: false, error: "Không tìm thấy ô soạn thảo trên trang này." };
     }
-    el.focus();
-    if (el.isContentEditable) {
-      try {
-        document.execCommand("selectAll", false, null);
-        document.execCommand("insertText", false, text);
-      } catch {
-        el.textContent = text;
-      }
-      el.dispatchEvent(new InputEvent("input", { bubbles: true, data: text }));
-    } else {
-      setNativeValue(el, text);
+    const next = String(text ?? "");
+    const normalized = next.replace(/\s+/g, " ").trim();
+    const current = readComposerText(el);
+    if (normalized && current === normalized) {
+      return { ok: true, element: el, skipped: true };
     }
-    return { ok: true, element: el };
+
+    el.focus();
+    clearComposer(el);
+
+    if (el.isContentEditable) {
+      let inserted = false;
+      try {
+        inserted = document.execCommand("insertText", false, next);
+      } catch {
+        inserted = false;
+      }
+      if (!inserted) {
+        el.textContent = next;
+      }
+      try {
+        el.dispatchEvent(
+          new InputEvent("input", {
+            bubbles: true,
+            composed: true,
+            data: next,
+            inputType: "insertText",
+          })
+        );
+      } catch {
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    } else {
+      setNativeValue(el, next);
+    }
+    return { ok: true, element: el, skipped: false };
   }
 
   function isFacebookHost() {
@@ -640,30 +758,40 @@
   }
 
   /**
-   * Convenience for confirm flow: insert text then send.
-   * @returns {{ok: boolean, method?: string, error?: string, inserted?: boolean}}
+   * Insert once (replace, not append), then send. Never inserts twice.
+   * @returns {{ok: boolean, method?: string, error?: string, inserted?: boolean, skippedInsert?: boolean}}
    */
   function insertAndSend(text) {
     const inserted = insertIntoComposer(text);
     if (!inserted.ok) {
       return { ok: false, error: inserted.error, inserted: false };
     }
-    const sent = clickSend(inserted.element);
+    // Re-find composer after insert; do not call insertIntoComposer again.
+    const el = inserted.element || findComposer();
+    const sent = clickSend(el);
     if (!sent.ok) {
       return {
         ok: false,
         error: sent.error,
         inserted: true,
+        skippedInsert: Boolean(inserted.skipped),
         insertedOnly: true,
       };
     }
-    return { ok: true, method: sent.method, inserted: true };
+    return {
+      ok: true,
+      method: sent.method,
+      inserted: true,
+      skippedInsert: Boolean(inserted.skipped),
+    };
   }
 
   globalThis.MedailyPageKit = {
     extractPageContext,
     findComposer,
     insertIntoComposer,
+    clearComposer,
+    readComposerText,
     findSendControl,
     clickSend,
     insertAndSend,
