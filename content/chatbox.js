@@ -1665,8 +1665,11 @@
     }
     if (!kit.findSendControl(composer)) {
       errorText =
-        "Đã có ô soạn, nhưng không thấy nút Gửi rõ ràng. Dùng Chèn rồi gửi thủ công trên trang.";
+        "Không tìm thấy nút Gửi — đã Chèn, hãy bấm Send trên FB/trang.";
       pendingSendConfirm = false;
+      // Still insert so the user can press Send manually.
+      insertDraft(resolveInsertText(overrideText));
+      hintText = "Đã Chèn. Bấm nút Send/Gửi trên trang (không reload).";
       render();
       return;
     }
@@ -1701,8 +1704,10 @@
     const composer = kit.findComposer();
     const sent = kit.clickSend(composer);
     if (!sent.ok) {
-      errorText = sent.error || "Không gửi được.";
-      hintText = "Đã chèn — hãy gửi thủ công trên trang.";
+      errorText =
+        sent.error ||
+        "Không tìm thấy nút Gửi — đã Chèn, hãy bấm Send trên FB.";
+      hintText = "Đã Chèn. Bấm Send/Gửi trên trang — extension không bấm lung tung.";
       render();
       return;
     }
