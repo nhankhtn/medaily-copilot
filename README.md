@@ -58,6 +58,7 @@ The product app still uses `POST /api/chat/live` via its BFF — unchanged.
 manifest.json
 background/service-worker.js   # message router + storage bootstrap
 background/medaily-client.js   # live HTTP client
+content/page-kit.js            # Pluggable extractors + composer insert/send
 content/chatbox.js             # Shadow DOM chat UI on every page
 content/chatbox.css            # Host-page isolation stub
 popup/                         # API key + show launcher
@@ -65,12 +66,20 @@ shared/defaults.js             # Hardcoded AI host + settings defaults
 icons/                         # Extension icons
 ```
 
+## Page actions
+
+Panel buttons (Vietnamese labels): **Tóm tắt**, **Gợi ý trả lời**, **Chèn**, **Gửi**.
+
+- Extractors: generic (any site), Facebook/Messenger thread, Gmail open email
+- **Chèn** / **Gửi** need a detectable page composer; **Gửi** always asks for confirm in the panel first
+
 ## Manual test checklist
 
 1. Load unpacked → open `https://example.com` → launcher appears bottom-right
 2. Open chat without an API key → clear error asking for SERVICE_TOKEN
 3. Paste SERVICE_TOKEN in the popup → Save → ask about the page → live reply (or clear HTTP error)
 4. Hide the FAB with × → popup **Show chat launcher again** restores it
+5. On FB/Messenger/Gmail: **Tóm tắt** / **Gợi ý trả lời** use thread/email context; **Chèn** + confirmed **Gửi** when composer/send are found
 
 ## Notes
 

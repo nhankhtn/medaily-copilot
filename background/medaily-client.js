@@ -10,7 +10,7 @@ const THREAD_STORAGE_KEY = "medailyCopilotThreadId";
  *
  * @param {object} payload
  * @param {Array<{role: string, content: string}>} payload.messages
- * @param {{url: string, title: string, selection?: string, pageText?: string}} payload.context
+ * @param {{url: string, title: string, selection?: string, pageText?: string, kind?: string, label?: string, subject?: string, thread?: string}} payload.context
  * @param {typeof DEFAULT_SETTINGS} settings
  * @returns {Promise<{reply: string, source: "api", threadId?: string}>}
  */
@@ -109,6 +109,7 @@ function buildHistory(messages) {
 
 /**
  * Page ground truth FIRST, then the question (API allows 4000 on extension path).
+ * Packs kind / subject / thread when extractors find them (FB, Gmail, etc.).
  */
 function buildApiMessage(payload, maxPageTextChars) {
   const lastUser = [...(payload.messages || [])]
@@ -120,13 +121,18 @@ function buildApiMessage(payload, maxPageTextChars) {
   const ctx = payload.context || {};
   const url = String(ctx.url || "").slice(0, 500);
   const title = String(ctx.title || "").slice(0, 240);
+  const kind = String(ctx.kind || "generic").slice(0, 40);
+  const label = String(ctx.label || "").slice(0, 80);
   const selection = (ctx.selection || "").trim().slice(0, 500);
+  const subject = (ctx.subject || "").trim().slice(0, 300);
+  const thread = (ctx.thread || "").replace(/\s+\n/g, "\n").trim();
   const pageText = (ctx.pageText || "").replace(/\s+/g, " ").trim();
 
   const instruction = [
     "[Browser Copilot]",
     "You are a browser page assistant for the tab described below.",
     "Treat [Current page] as ground truth for which site/page the user is on.",
+    "When Kind is facebook/messenger/gmail, prefer Thread/Subject over generic Excerpt.",
     "Answer using that page context. Do NOT claim you are the Medaily in-app assistant.",
     "Do NOT suggest Ctrl+K / Ctrl+J / in-app navigation unless the page URL is the Medaily app itself.",
   ].join(" ");
@@ -134,17 +140,22 @@ function buildApiMessage(payload, maxPageTextChars) {
   const pageLines = ["[Current page]"];
   pageLines.push(`URL: ${url || "(unknown)"}`);
   pageLines.push(`Title: ${title || "(untitled)"}`);
+  pageLines.push(`Kind: ${kind}${label ? ` (${label})` : ""}`);
+  if (subject) pageLines.push(`Subject: ${subject}`);
   if (selection) pageLines.push(`Selected text: ${selection}`);
 
   const prefix = [instruction, "", ...pageLines, ""].join("\n");
   const questionBlock = `[User question]\n${question}`;
-  const remaining = Math.max(0, 4000 - prefix.length - questionBlock.length - 24);
-  const excerptBudget = Math.min(
+  const remaining = Math.max(0, 4000 - prefix.length - questionBlock.length - 40);
+  const budget = Math.min(
     remaining,
     Math.max(120, Number(maxPageTextChars) || 4000)
   );
-  if (!selection && pageText && excerptBudget > 40) {
-    pageLines.push(`Excerpt: ${pageText.slice(0, excerptBudget)}`);
+
+  if (thread && budget > 40) {
+    pageLines.push(`Thread:\n${thread.slice(0, budget)}`);
+  } else if (!selection && pageText && budget > 40) {
+    pageLines.push(`Excerpt: ${pageText.slice(0, budget)}`);
   }
 
   return [instruction, "", ...pageLines, "", questionBlock].join("\n").slice(0, 4000);

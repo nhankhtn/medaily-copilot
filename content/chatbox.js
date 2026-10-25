@@ -6,15 +6,24 @@
   const FONT_HREF =
     "https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap";
 
-  /** @type {{role: "user"|"assistant"|"system", content: string}[]} */
+  /** @type {{role: "user"|"assistant"|"system", content: string, source?: string}[]} */
   let messages = [];
   let open = false;
   let loading = false;
   let errorText = "";
   let hintText = "";
   let launcherHidden = false;
+  /** Last AI reply usable for Chèn / Gửi (reply drafts). */
+  let lastDraft = "";
+  /** When true, show explicit confirm before auto-send on the page. */
+  let pendingSendConfirm = false;
   /** Content-script ceiling so a hung SW cannot leave the composer locked. */
   const SEND_GUARD_MS = 95_000;
+
+  const SUMMARIZE_PROMPT =
+    "Tóm tắt nội dung đang mở trên trang (thread chat / email / đoạn trang). Ngắn gọn, rõ ý chính.";
+  const SUGGEST_PROMPT =
+    "Gợi ý 1–3 câu trả lời sẵn để dán vào ô soạn thảo. Chỉ viết nội dung trả lời, không giải thích dài.";
 
   const host = document.createElement("div");
   host.id = ROOT_ID;
@@ -334,7 +343,7 @@
       color: #a8bcc8;
     }
 
-    .error, .hint {
+    .error, .hint, .status {
       margin: 0 14px 8px;
       padding: 8px 10px;
       border-radius: 10px;
@@ -351,10 +360,93 @@
       border: 1px solid rgba(46, 196, 182, 0.28);
       color: #b7e6df;
     }
+    .status {
+      background: rgba(244, 162, 97, 0.1);
+      border: 1px solid rgba(244, 162, 97, 0.3);
+      color: #f0d0b0;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 8px 12px 0;
+      border-top: 1px solid var(--line);
+      background: rgba(10, 14, 18, 0.28);
+    }
+    .action-btn {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel-2);
+      color: var(--text);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 11px;
+      cursor: pointer;
+      transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+    }
+    .action-btn:hover:not(:disabled) {
+      border-color: rgba(46, 196, 182, 0.45);
+      background: #2a3c4a;
+      transform: translateY(-1px);
+    }
+    .action-btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .action-btn:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .action-btn.danger {
+      border-color: rgba(255, 107, 107, 0.4);
+      color: #ffc9c9;
+    }
+
+    .confirm {
+      margin: 0 12px 8px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 107, 107, 0.4);
+      background: rgba(255, 107, 107, 0.1);
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .confirm[data-open="true"] { display: flex; }
+    .confirm p {
+      margin: 0;
+      font-size: 12.5px;
+      line-height: 1.4;
+      color: #ffd0d0;
+    }
+    .confirm-row {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+    .confirm-row button {
+      border: 0;
+      border-radius: 10px;
+      padding: 7px 12px;
+      font: inherit;
+      font-size: 12.5px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .confirm-cancel {
+      background: var(--panel-2);
+      color: var(--text);
+    }
+    .confirm-ok {
+      background: var(--danger);
+      color: #1a0505;
+    }
 
     .composer {
       padding: 10px 12px 12px;
-      border-top: 1px solid var(--line);
       display: grid;
       grid-template-columns: 1fr auto;
       gap: 8px;
@@ -497,7 +589,21 @@
     </header>
     <div class="messages" data-el="messages" aria-live="polite"></div>
     <div class="hint" data-el="hint" hidden></div>
+    <div class="status" data-el="status" hidden></div>
     <div class="error" data-el="error" hidden></div>
+    <div class="confirm" data-el="confirm" data-open="false" role="alertdialog" aria-label="Confirm send">
+      <p data-el="confirm-text">Chèn nội dung rồi nhấn Gửi trên trang?</p>
+      <div class="confirm-row">
+        <button type="button" class="confirm-cancel" data-el="confirm-cancel">Hủy</button>
+        <button type="button" class="confirm-ok" data-el="confirm-ok">Xác nhận gửi</button>
+      </div>
+    </div>
+    <div class="actions" data-el="actions">
+      <button type="button" class="action-btn" data-action="summarize">Tóm tắt</button>
+      <button type="button" class="action-btn" data-action="suggest">Gợi ý trả lời</button>
+      <button type="button" class="action-btn" data-action="insert">Chèn</button>
+      <button type="button" class="action-btn danger" data-action="send-page">Gửi</button>
+    </div>
     <form class="composer" data-el="form">
       <textarea data-el="input" rows="2" placeholder="Ask about this page…" maxlength="4000"></textarea>
       <button class="send" type="submit" data-el="send">Ask</button>
@@ -513,7 +619,13 @@
     hide: panel.querySelector('[data-el="hide"]'),
     messages: panel.querySelector('[data-el="messages"]'),
     hint: panel.querySelector('[data-el="hint"]'),
+    status: panel.querySelector('[data-el="status"]'),
     error: panel.querySelector('[data-el="error"]'),
+    confirm: panel.querySelector('[data-el="confirm"]'),
+    confirmText: panel.querySelector('[data-el="confirm-text"]'),
+    confirmCancel: panel.querySelector('[data-el="confirm-cancel"]'),
+    confirmOk: panel.querySelector('[data-el="confirm-ok"]'),
+    actions: panel.querySelector('[data-el="actions"]'),
     form: panel.querySelector('[data-el="form"]'),
     input: panel.querySelector('[data-el="input"]'),
     send: panel.querySelector('[data-el="send"]'),
@@ -530,9 +642,14 @@
   }
 
   function updateSubtitle() {
-    const title = (document.title || "").trim() || location.hostname || "this page";
-    els.subtitle.textContent = truncate(title, 48);
-    els.subtitle.title = title;
+    const ctx = collectContext();
+    const title = (ctx.title || "").trim() || location.hostname || "this page";
+    const kindLabel =
+      ctx.kind && ctx.kind !== "generic"
+        ? `${ctx.label || ctx.kind} · `
+        : "";
+    els.subtitle.textContent = truncate(`${kindLabel}${title}`, 52);
+    els.subtitle.title = `${ctx.label || ctx.kind || "page"} — ${title}`;
   }
 
   function setOpen(next) {
@@ -541,6 +658,7 @@
     launcher.setAttribute("aria-expanded", String(open));
     dock.setAttribute("data-expanded", String(open));
     if (open) {
+      updateSubtitle();
       refreshKeyHint();
       render();
       queueMicrotask(() => {
@@ -600,7 +718,14 @@
     if (!messages.length && !loading) {
       const empty = document.createElement("div");
       empty.className = "empty";
-      empty.textContent = "Ask about this page…";
+      const strong = document.createElement("strong");
+      strong.textContent = "Ask about this page";
+      empty.appendChild(strong);
+      empty.appendChild(
+        document.createTextNode(
+          "Tóm tắt · Gợi ý trả lời · Chèn vào ô soạn · Gửi (có xác nhận)."
+        )
+      );
       els.messages.appendChild(empty);
     }
 
@@ -637,6 +762,15 @@
       els.hint.textContent = "";
     }
 
+    const pageStatus = buildPageStatus();
+    if (pageStatus && !errorText) {
+      els.status.hidden = false;
+      els.status.textContent = pageStatus;
+    } else {
+      els.status.hidden = true;
+      els.status.textContent = "";
+    }
+
     if (errorText) {
       els.error.hidden = false;
       els.error.textContent = errorText;
@@ -645,12 +779,35 @@
       els.error.textContent = "";
     }
 
+    els.confirm.setAttribute("data-open", pendingSendConfirm ? "true" : "false");
+
     // Never grey out the textarea. Ask is only blocked while a request is in
     // flight — missing keys / empty text show in-panel errors on send instead.
     unlockComposer();
     els.send.disabled = loading;
     els.send.setAttribute("aria-busy", loading ? "true" : "false");
+    els.actions.querySelectorAll(".action-btn").forEach((btn) => {
+      btn.disabled = loading;
+    });
     els.messages.scrollTop = els.messages.scrollHeight;
+  }
+
+  function buildPageStatus() {
+    const kit = globalThis.MedailyPageKit;
+    if (!kit) return "";
+    const ctx = kit.extractPageContext();
+    const composer = kit.findComposer();
+    const parts = [`Trang: ${ctx.label || ctx.kind}`];
+    if (ctx.thread) parts.push("đã đọc thread/email");
+    else if (ctx.pageText) parts.push("đã đọc nội dung trang");
+    if (!composer) {
+      parts.push("Chèn/Gửi: chưa thấy ô soạn thảo");
+    } else if (!kit.findSendControl(composer)) {
+      parts.push("Gửi: chưa thấy nút gửi rõ ràng");
+    } else {
+      parts.push("có thể Chèn + Gửi (có xác nhận)");
+    }
+    return parts.join(" · ");
   }
 
   function unlockComposer() {
@@ -662,17 +819,24 @@
   }
 
   function collectContext() {
+    const kit = globalThis.MedailyPageKit;
+    if (kit?.extractPageContext) {
+      return kit.extractPageContext();
+    }
+    // Fallback if page-kit failed to load.
     const selection = window.getSelection()?.toString()?.trim() || "";
-    const pageText = extractPageText(4000);
     return {
       url: location.href,
       title: document.title || "",
       selection: selection || undefined,
-      pageText: pageText || undefined,
+      pageText: extractPageTextFallback(4000) || undefined,
+      kind: "generic",
+      label: location.hostname || "page",
+      canCompose: false,
     };
   }
 
-  function extractPageText(maxChars) {
+  function extractPageTextFallback(maxChars) {
     const clone = document.body ? document.body.cloneNode(true) : null;
     if (!clone) return "";
     clone
@@ -680,11 +844,27 @@
         "script,style,noscript,svg,canvas,iframe,#medaily-copilot-root"
       )
       .forEach((n) => n.remove());
-    const text = (clone.innerText || clone.textContent || "").replace(/\s+/g, " ").trim();
+    const text = (clone.innerText || clone.textContent || "")
+      .replace(/\s+/g, " ")
+      .trim();
     return text.slice(0, maxChars);
   }
 
-  async function sendMessage(text) {
+  function pickDraftText(reply) {
+    const raw = String(reply || "").trim();
+    if (!raw) return "";
+    // Prefer first numbered/bulleted draft block if present.
+    const lines = raw.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+    const drafts = lines.filter((l) => /^(\d+[\).]|[-•*])\s+/.test(l));
+    if (drafts.length) {
+      return drafts
+        .map((l) => l.replace(/^(\d+[\).]|[-•*])\s+/, ""))
+        .join("\n\n");
+    }
+    return raw;
+  }
+
+  async function sendMessage(text, opts = {}) {
     const content = text.trim();
     if (loading) return;
     if (!content) {
@@ -695,9 +875,11 @@
     }
 
     errorText = "";
+    pendingSendConfirm = false;
     messages.push({ role: "user", content });
     loading = true;
-    els.input.value = "";
+    if (!opts.keepInput) els.input.value = "";
+    updateSubtitle();
     render();
 
     let guardTimer;
@@ -751,6 +933,9 @@
         content: response.reply,
         source: response.source,
       });
+      if (opts.captureDraft !== false) {
+        lastDraft = pickDraftText(response.reply);
+      }
       hintText = "";
     } catch (err) {
       errorText = err?.message || String(err);
@@ -761,6 +946,128 @@
       unlockComposer();
       render();
       els.input.focus();
+    }
+  }
+
+  function resolveInsertText() {
+    const selectedInPanel = (() => {
+      try {
+        const sel = shadow.getSelection?.() || window.getSelection();
+        if (!sel || sel.isCollapsed) return "";
+        const text = sel.toString().trim();
+        if (!text) return "";
+        // Only use selection if it lives inside our panel.
+        const node = sel.anchorNode;
+        if (node && (panel.contains(node) || shadow.contains(node))) return text;
+      } catch {
+        // ignore
+      }
+      return "";
+    })();
+    return selectedInPanel || lastDraft || "";
+  }
+
+  function insertDraft() {
+    const kit = globalThis.MedailyPageKit;
+    if (!kit) {
+      errorText = "Page kit chưa sẵn sàng — reload extension.";
+      render();
+      return false;
+    }
+    const text = resolveInsertText();
+    if (!text) {
+      errorText =
+        "Chưa có bản nháp để chèn — dùng Gợi ý trả lời trước, hoặc bôi đen một đoạn trong panel.";
+      render();
+      return false;
+    }
+    const result = kit.insertIntoComposer(text);
+    if (!result.ok) {
+      errorText = result.error || "Không chèn được.";
+      render();
+      return false;
+    }
+    errorText = "";
+    hintText = "Đã chèn vào ô soạn thảo trên trang.";
+    render();
+    return true;
+  }
+
+  function requestSendConfirm() {
+    const kit = globalThis.MedailyPageKit;
+    if (!kit) {
+      errorText = "Page kit chưa sẵn sàng — reload extension.";
+      render();
+      return;
+    }
+    const composer = kit.findComposer();
+    if (!composer) {
+      errorText =
+        "Trang này chưa hỗ trợ Chèn/Gửi — không tìm thấy ô soạn thảo (contenteditable/textarea).";
+      pendingSendConfirm = false;
+      render();
+      return;
+    }
+    if (!kit.findSendControl(composer)) {
+      errorText =
+        "Đã có ô soạn, nhưng không thấy nút Gửi rõ ràng. Dùng Chèn rồi gửi thủ công trên trang.";
+      pendingSendConfirm = false;
+      render();
+      return;
+    }
+    const text = resolveInsertText();
+    if (!text) {
+      errorText =
+        "Chưa có nội dung để gửi — Gợi ý trả lời trước, hoặc bôi đen draft trong panel.";
+      pendingSendConfirm = false;
+      render();
+      return;
+    }
+    errorText = "";
+    pendingSendConfirm = true;
+    els.confirmText.textContent =
+      "Sẽ chèn bản nháp vào ô soạn thảo rồi nhấn Gửi trên trang. Xác nhận? (không gửi im lặng)";
+    render();
+  }
+
+  function confirmAndSend() {
+    pendingSendConfirm = false;
+    const kit = globalThis.MedailyPageKit;
+    if (!kit) {
+      errorText = "Page kit chưa sẵn sàng.";
+      render();
+      return;
+    }
+    if (!insertDraft()) return;
+    const composer = kit.findComposer();
+    const sent = kit.clickSend(composer);
+    if (!sent.ok) {
+      errorText = sent.error || "Không gửi được.";
+      hintText = "Đã chèn — hãy gửi thủ công trên trang.";
+      render();
+      return;
+    }
+    hintText = "Đã chèn và gửi trên trang.";
+    errorText = "";
+    render();
+  }
+
+  function onActionClick(action) {
+    if (loading) return;
+    if (action === "summarize") {
+      sendMessage(SUMMARIZE_PROMPT, { captureDraft: false });
+      return;
+    }
+    if (action === "suggest") {
+      sendMessage(SUGGEST_PROMPT, { captureDraft: true });
+      return;
+    }
+    if (action === "insert") {
+      insertDraft();
+      return;
+    }
+    if (action === "send-page") {
+      requestSendConfirm();
     }
   }
 
@@ -783,6 +1090,18 @@
   els.close.addEventListener("click", () => setOpen(false));
   els.hide.addEventListener("click", () => setLauncherHidden(true));
 
+  els.actions.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-action]");
+    if (!btn || btn.disabled) return;
+    onActionClick(btn.getAttribute("data-action"));
+  });
+
+  els.confirmCancel.addEventListener("click", () => {
+    pendingSendConfirm = false;
+    render();
+  });
+  els.confirmOk.addEventListener("click", () => confirmAndSend());
+
   els.input.addEventListener("input", () => {
     unlockComposer();
     els.send.disabled = loading;
@@ -795,7 +1114,14 @@
       e.preventDefault();
       els.form.requestSubmit();
     }
-    if (e.key === "Escape") setOpen(false);
+    if (e.key === "Escape") {
+      if (pendingSendConfirm) {
+        pendingSendConfirm = false;
+        render();
+        return;
+      }
+      setOpen(false);
+    }
   });
 
   els.form.addEventListener("submit", (e) => {
@@ -804,7 +1130,14 @@
   });
 
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && open) setOpen(false);
+    if (e.key === "Escape" && open) {
+      if (pendingSendConfirm) {
+        pendingSendConfirm = false;
+        render();
+        return;
+      }
+      setOpen(false);
+    }
   });
 
   chrome.storage.onChanged.addListener((changes, area) => {
