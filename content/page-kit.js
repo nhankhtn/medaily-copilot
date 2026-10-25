@@ -254,35 +254,69 @@
     return { ok: true, element: el };
   }
 
+  function isFacebookHost() {
+    const h = hostOf();
+    return (
+      h === "facebook.com" ||
+      h.endsWith(".facebook.com") ||
+      h === "messenger.com" ||
+      h.endsWith(".messenger.com")
+    );
+  }
+
   /**
-   * Walk up from the composer to a tight chat/compose container.
-   * Never return document — that caused FB page reloads via wrong "Send" hits.
+   * Tight compose-row / chat pane around the message box.
+   * Never returns document — document-wide "Send" reloaded Facebook.
    */
+  function findComposeToolbar(composer) {
+    if (!composer) return null;
+    const cRect = composer.getBoundingClientRect();
+    let node = composer.parentElement;
+    for (let i = 0; i < 8 && node; i++) {
+      if (node === document.body || node === document.documentElement) break;
+      const rect = node.getBoundingClientRect();
+      const midOk =
+        Math.abs((rect.top + rect.bottom) / 2 - (cRect.top + cRect.bottom) / 2) <
+        70;
+      // Same row, a bit wider than the textbox (room for send / paper-plane).
+      if (midOk && rect.width >= cRect.width + 24 && rect.height < 160) {
+        return node;
+      }
+      node = node.parentElement;
+    }
+    return composer.parentElement;
+  }
+
   function composerSearchRoots(composer) {
     if (!composer) return [];
     const roots = [];
     const push = (el) => {
-      if (el && el.nodeType === 1 && !roots.includes(el) && el !== document.body && el !== document.documentElement) {
+      if (
+        el &&
+        el.nodeType === 1 &&
+        !roots.includes(el) &&
+        el !== document.body &&
+        el !== document.documentElement
+      ) {
         roots.push(el);
       }
     };
 
+    push(findComposeToolbar(composer));
     push(composer.closest('[aria-label*="Conversation" i]'));
     push(composer.closest('[aria-label*="Tin nhắn" i]'));
     push(composer.closest('[aria-label*="Messages" i]'));
     push(composer.closest('[data-pagelet*="MWThread"]'));
     push(composer.closest('[data-pagelet*="ChatTab"]'));
     push(composer.closest('[role="dialog"]'));
-    push(composer.closest('[role="main"]'));
-    // Gmail compose tray / reply box
+    // Gmail compose tray / reply box (not whole inbox)
     push(composer.closest(".btC")?.parentElement);
     push(composer.closest(".gU")?.parentElement);
     push(composer.closest(".aO7"));
-    push(composer.closest("form"));
+    push(composer.closest('[role="region"]'));
 
-    // Local ancestry only (max ~8 levels) — keep search near the message box.
     let node = composer.parentElement;
-    for (let i = 0; i < 8 && node; i++) {
+    for (let i = 0; i < 6 && node; i++) {
       push(node);
       node = node.parentElement;
     }
@@ -311,11 +345,26 @@
     if (el.tagName === "A" || el.closest?.("a[href]")) return true;
     if (el.getAttribute("role") === "link") return true;
     if (el.tagName === "BUTTON" && (el.type || "").toLowerCase() === "submit") {
-      return true; // never click bare form submits
+      return true;
     }
     const href = el.getAttribute?.("href");
     if (href && href !== "#" && !href.startsWith("javascript:")) return true;
     return false;
+  }
+
+  function geometryNearComposer(el, composer) {
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 8 || rect.height < 8) return null;
+    if (rect.bottom < 0 || rect.top > innerHeight) return null;
+    const cRect = composer.getBoundingClientRect();
+    const cx = cRect.left + cRect.width / 2;
+    const cy = cRect.top + cRect.height / 2;
+    const bx = rect.left + rect.width / 2;
+    const by = rect.top + rect.height / 2;
+    const dist = Math.hypot(bx - cx, by - cy);
+    const sameRow = Math.abs(by - cy) < 56;
+    const toTheRight = rect.left >= cRect.left - 8;
+    return { rect, cRect, dist, sameRow, toTheRight, bx, by };
   }
 
   function looksLikeComposerSend(el, composer) {
@@ -323,54 +372,42 @@
     if (el === composer || el.contains?.(composer)) return false;
     if (el.disabled || el.getAttribute("aria-disabled") === "true") return false;
 
-    const rect = el.getBoundingClientRect();
-    if (rect.width < 8 || rect.height < 8) return false;
-    if (rect.bottom < 0 || rect.top > innerHeight) return false;
-
-    // Must be near the composer (same pane), not elsewhere on the page.
-    const cRect = composer.getBoundingClientRect();
-    const cx = cRect.left + cRect.width / 2;
-    const cy = cRect.top + cRect.height / 2;
-    const bx = rect.left + rect.width / 2;
-    const by = rect.top + rect.height / 2;
-    const dist = Math.hypot(bx - cx, by - cy);
-    if (dist > 280) return false;
-    // Send usually sits to the right / same row as the composer.
-    if (by < cRect.top - 80) return false;
+    const geo = geometryNearComposer(el, composer);
+    if (!geo) return false;
+    // Same compose toolbar / nearby only.
+    if (geo.dist > 360) return false;
+    if (geo.by < geo.cRect.top - 90) return false;
 
     const label = labelOf(el);
     const lower = label.toLowerCase();
 
-    // Hard rejects — common FB/Gmail false positives that navigate or do other actions.
     if (
-      /(send feedback|send money|send invite|send gift|messenger\s*send|share|navigate|back to|đóng|close chat|search|tìm kiếm)/i.test(
+      /(send feedback|send money|send invite|send gift|share|navigate|back to|đóng|close chat|search|tìm kiếm|sticker|emoji|gif|attach|photo|voice|microphone|mic\b|like|react|more actions|nhãn dán|tệp|ảnh)/i.test(
         lower
       )
     ) {
       return false;
     }
 
-    // High-confidence Messenger / FB labels.
+    // Messenger / FB primary labels.
     if (/press enter to send|nhấn enter để gửi|press\s*enter.*gửi/i.test(lower)) {
       return true;
     }
-    // Exact-ish send labels (not "Send to…", "Sender", …).
     if (/^(send|gửi|gửi tin nhắn|send message)$/i.test(label.trim())) {
       return true;
     }
     if (
       (/^send\b/i.test(lower) || /^gửi\b/i.test(lower)) &&
-      label.trim().length <= 28 &&
+      label.trim().length <= 40 &&
       !/sender|sending|sent|resend/i.test(lower)
     ) {
       return true;
     }
 
-    // Gmail / generic compose toolbar: role=button with short Send/Gửi label.
     if (
       (el.getAttribute("role") === "button" || el.tagName === "DIV") &&
       /^(send|gửi)\b/i.test(lower) &&
-      lower.length < 40
+      lower.length < 48
     ) {
       return true;
     }
@@ -380,28 +417,42 @@
       return true;
     }
 
+    // Icon-only paper-plane sitting immediately right of the textbox (FB).
+    if (
+      isFacebookHost() &&
+      geo.sameRow &&
+      geo.toTheRight &&
+      geo.dist < 140 &&
+      el.querySelector?.("svg") &&
+      (el.getAttribute("role") === "button" ||
+        el.tagName === "DIV" ||
+        el.tagName === "SPAN") &&
+      (lower.length === 0 ||
+        /send|gửi|enter/i.test(lower) ||
+        label.trim().length <= 2)
+    ) {
+      return true;
+    }
+
     return false;
   }
 
   function scoreSendCandidate(el, composer) {
-    const cRect = composer.getBoundingClientRect();
-    const rect = el.getBoundingClientRect();
-    const dist = Math.hypot(
-      rect.left + rect.width / 2 - (cRect.left + cRect.width / 2),
-      rect.top + rect.height / 2 - (cRect.top + cRect.height / 2)
-    );
-    let score = 1000 - dist;
+    const geo = geometryNearComposer(el, composer);
+    if (!geo) return -1e9;
+    let score = 1000 - geo.dist;
     const label = labelOf(el).toLowerCase();
-    if (/press enter to send|nhấn enter để gửi/i.test(label)) score += 400;
-    if (/^(send|gửi)$/i.test(label.trim())) score += 200;
-    // Prefer right of composer.
-    if (rect.left >= cRect.left) score += 40;
+    if (/press enter to send|nhấn enter để gửi/i.test(label)) score += 500;
+    if (/^(send|gửi)$/i.test(label.trim())) score += 250;
+    if (/\bsend\b|\bgửi\b/i.test(label)) score += 80;
+    if (geo.sameRow) score += 80;
+    if (geo.toTheRight) score += 60;
+    if (el.querySelector?.("svg") && geo.dist < 120) score += 30;
     return score;
   }
 
   /**
-   * Composer-scoped only. Never falls back to document.querySelector("…send…")
-   * or button[type=submit] — those reloaded Facebook.
+   * Composer-toolbar scoped. Never document.querySelector / form submit.
    */
   function findSendControl(near) {
     const composer = near && isEditable(near) ? near : findComposer();
@@ -419,14 +470,14 @@
       '[aria-label="Gửi"]',
       '[aria-label="Send message" i]',
       '[aria-label="Gửi tin nhắn" i]',
-      '[aria-label^="Send" i]',
-      '[aria-label^="Gửi" i]',
+      '[aria-label*="Send" i]',
+      '[aria-label*="Gửi" i]',
       '[data-testid="send"]',
       '[data-testid*="composer-send" i]',
       '[role="button"][aria-label*="Send" i]',
       '[role="button"][aria-label*="Gửi" i]',
-      'div[aria-label*="Send" i]',
-      'div[aria-label*="Gửi" i]',
+      'div[role="button"]',
+      'span[role="button"]',
     ];
 
     /** @type {Element[]} */
@@ -455,47 +506,158 @@
       (a, b) => scoreSendCandidate(b, composer) - scoreSendCandidate(a, composer)
     );
     const best = candidates[0];
-    // Require a confident score (near composer + send-like label).
-    if (scoreSendCandidate(best, composer) < 700) return null;
+    // Softer floor than before — Enter is the FB safety net if this is null.
+    if (scoreSendCandidate(best, composer) < 520) return null;
     return best;
   }
 
-  function clickSend(near) {
-    const composer = near && isEditable(near) ? near : findComposer();
-    const btn = findSendControl(composer);
-    if (!btn || isNavigational(btn) || !looksLikeComposerSend(btn, composer)) {
+  function makeEnterEvent(type) {
+    const init = {
+      key: "Enter",
+      code: "Enter",
+      keyCode: 13,
+      which: 13,
+      charCode: type === "keypress" ? 13 : 0,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      view: window,
+    };
+    let evt;
+    try {
+      evt = new KeyboardEvent(type, init);
+    } catch {
+      evt = document.createEvent("KeyboardEvent");
+      evt.initEvent(type, true, true);
+    }
+    // Chromium often ignores keyCode in the constructor — force for FB listeners.
+    try {
+      Object.defineProperty(evt, "keyCode", { get: () => 13 });
+      Object.defineProperty(evt, "which", { get: () => 13 });
+      Object.defineProperty(evt, "key", { get: () => "Enter" });
+      Object.defineProperty(evt, "code", { get: () => "Enter" });
+    } catch {
+      // ignore
+    }
+    return evt;
+  }
+
+  /** FB/Messenger often sends on Enter in the contenteditable — not a form submit. */
+  function sendWithEnter(composer) {
+    if (!composer || !isEditable(composer)) {
+      return { ok: false, error: "Không có ô soạn để gửi Enter." };
+    }
+    try {
+      composer.focus();
+      // Place caret at end so Enter applies to the drafted text.
+      try {
+        const sel = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(composer);
+        range.collapse(false);
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+      } catch {
+        // ignore caret placement failures
+      }
+      for (const type of ["keydown", "keypress", "keyup"]) {
+        const evt = makeEnterEvent(type);
+        const cancelled = !composer.dispatchEvent(evt);
+        if (cancelled && type === "keydown") {
+          // Handler consumed Enter — treat as attempted send.
+          break;
+        }
+      }
+      return { ok: true, method: "enter" };
+    } catch {
       return {
         ok: false,
-        error:
-          "Không tìm thấy nút Gửi — đã Chèn, hãy bấm Send trên trang.",
+        error: "Enter gửi thất bại — đã Chèn, hãy bấm Send trên trang.",
+      };
+    }
+  }
+
+  function clickSendButton(btn, composer) {
+    if (!btn || isNavigational(btn)) {
+      return { ok: false, error: "Nút Gửi không an toàn." };
+    }
+    composer?.focus?.();
+    btn.focus?.();
+    const evt = new MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      buttons: 1,
+    });
+    btn.dispatchEvent(evt);
+    if (typeof btn.click === "function") btn.click();
+    return { ok: true, method: "button" };
+  }
+
+  /**
+   * Insert then send: button in compose toolbar, else Enter on FB/Messenger.
+   * @returns {{ok: boolean, method?: "button"|"enter", error?: string, insertedOnly?: boolean}}
+   */
+  function clickSend(near) {
+    const composer = near && isEditable(near) ? near : findComposer();
+    if (!composer) {
+      return {
+        ok: false,
+        error: "Không tìm thấy ô soạn thảo để gửi.",
         insertedOnly: true,
       };
     }
 
-    try {
-      // Focus composer first so FB/Messenger bind send to the open thread.
-      composer?.focus?.();
-      btn.focus?.();
-      // Native click — do not submit forms or dispatch Enter (that navigated FB).
-      const evt = new MouseEvent("click", {
-        bubbles: true,
-        cancelable: true,
-        view: window,
-        buttons: 1,
-      });
-      btn.dispatchEvent(evt);
-      if (typeof btn.click === "function") {
-        btn.click();
+    // Re-scan after insert — FB often mounts the send control only once text exists.
+    const btn = findSendControl(composer);
+    if (btn && looksLikeComposerSend(btn, composer) && !isNavigational(btn)) {
+      try {
+        const clicked = clickSendButton(btn, composer);
+        if (clicked.ok) return clicked;
+      } catch {
+        // fall through to Enter on FB
       }
-      return { ok: true };
-    } catch (err) {
+    }
+
+    if (isFacebookHost()) {
+      const entered = sendWithEnter(composer);
+      if (entered.ok) return entered;
       return {
         ok: false,
         error:
-          "Không gửi được — đã Chèn, hãy bấm Send trên trang.",
+          entered.error ||
+          "Không gửi được (nút + Enter) — đã Chèn, hãy bấm Send trên FB.",
         insertedOnly: true,
       };
     }
+
+    return {
+      ok: false,
+      error:
+        "Không tìm thấy nút Gửi gần ô soạn — đã Chèn, hãy bấm Send trên trang.",
+      insertedOnly: true,
+    };
+  }
+
+  /**
+   * Convenience for confirm flow: insert text then send.
+   * @returns {{ok: boolean, method?: string, error?: string, inserted?: boolean}}
+   */
+  function insertAndSend(text) {
+    const inserted = insertIntoComposer(text);
+    if (!inserted.ok) {
+      return { ok: false, error: inserted.error, inserted: false };
+    }
+    const sent = clickSend(inserted.element);
+    if (!sent.ok) {
+      return {
+        ok: false,
+        error: sent.error,
+        inserted: true,
+        insertedOnly: true,
+      };
+    }
+    return { ok: true, method: sent.method, inserted: true };
   }
 
   globalThis.MedailyPageKit = {
@@ -504,6 +666,9 @@
     insertIntoComposer,
     findSendControl,
     clickSend,
+    insertAndSend,
+    sendWithEnter,
+    isFacebookHost,
     hostOf,
   };
 })();

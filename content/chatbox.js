@@ -1432,10 +1432,12 @@
     else if (ctx.pageText) parts.push("đã đọc nội dung trang");
     if (!composer) {
       parts.push("Chèn/Gửi: chưa thấy ô soạn thảo");
-    } else if (!kit.findSendControl(composer)) {
-      parts.push("Gửi: chưa thấy nút gửi rõ ràng");
-    } else {
+    } else if (kit.findSendControl(composer)) {
       parts.push("có thể Chèn + Gửi (có xác nhận)");
+    } else if (typeof kit.isFacebookHost === "function" && kit.isFacebookHost()) {
+      parts.push("Gửi: sẽ dùng Enter trên ô chat nếu không thấy nút");
+    } else {
+      parts.push("Gửi: chưa thấy nút Send gần ô soạn");
     }
     return parts.join(" · ");
   }
@@ -1663,16 +1665,6 @@
       render();
       return;
     }
-    if (!kit.findSendControl(composer)) {
-      errorText =
-        "Không tìm thấy nút Gửi — đã Chèn, hãy bấm Send trên FB/trang.";
-      pendingSendConfirm = false;
-      // Still insert so the user can press Send manually.
-      insertDraft(resolveInsertText(overrideText));
-      hintText = "Đã Chèn. Bấm nút Send/Gửi trên trang (không reload).";
-      render();
-      return;
-    }
     const text = resolveInsertText(overrideText);
     if (!text) {
       errorText =
@@ -1681,12 +1673,18 @@
       render();
       return;
     }
+    // Allow confirm even without a visible Send button — FB can send via Enter after insert.
+    const hasBtn = Boolean(kit.findSendControl(composer));
+    const fb = typeof kit.isFacebookHost === "function" && kit.isFacebookHost();
     pendingSendText = text;
     lastDraft = text;
     errorText = "";
     pendingSendConfirm = true;
-    els.confirmText.textContent =
-      "Sẽ chèn bản nháp vào ô soạn thảo rồi nhấn Gửi trên trang. Xác nhận? (không gửi im lặng)";
+    els.confirmText.textContent = hasBtn
+      ? "Sẽ chèn bản nháp rồi bấm Gửi trên trang. Xác nhận? (không gửi im lặng)"
+      : fb
+        ? "Sẽ chèn bản nháp rồi gửi bằng Enter trên ô chat FB. Xác nhận?"
+        : "Sẽ chèn bản nháp rồi thử Gửi (nút gần ô soạn). Xác nhận?";
     render();
   }
 
@@ -1700,19 +1698,48 @@
     }
     const text = resolveInsertText();
     pendingSendText = "";
-    if (!insertDraft(text)) return;
-    const composer = kit.findComposer();
-    const sent = kit.clickSend(composer);
-    if (!sent.ok) {
-      errorText =
-        sent.error ||
-        "Không tìm thấy nút Gửi — đã Chèn, hãy bấm Send trên FB.";
-      hintText = "Đã Chèn. Bấm Send/Gửi trên trang — extension không bấm lung tung.";
+    if (!text) {
+      errorText = "Không có nội dung để gửi.";
       render();
       return;
     }
-    hintText = "Đã chèn và gửi trên trang.";
+
+    // Prefer atomic insert+send so we never report Gửi success on insert-only.
+    let result;
+    if (typeof kit.insertAndSend === "function") {
+      result = kit.insertAndSend(text);
+    } else {
+      const inserted = kit.insertIntoComposer(text);
+      if (!inserted.ok) {
+        errorText = inserted.error || "Không chèn được.";
+        render();
+        return;
+      }
+      result = kit.clickSend(inserted.element);
+      if (result && result.ok) result.inserted = true;
+      else if (result) result.inserted = true;
+    }
+
+    if (!result?.ok) {
+      errorText =
+        result?.error ||
+        "Gửi thất bại — đã Chèn, hãy bấm Send trên trang.";
+      hintText = result?.inserted
+        ? "Chỉ Chèn được — chưa gửi. Bấm Send/Gửi trên FB thủ công."
+        : "";
+      render();
+      return;
+    }
+
+    lastDraft = text;
     errorText = "";
+    if (result.method === "enter") {
+      hintText = "Đã gửi (Enter).";
+    } else if (result.method === "button") {
+      hintText = "Đã bấm Gửi.";
+    } else {
+      hintText = "Đã chèn và gửi trên trang.";
+    }
     render();
   }
 
