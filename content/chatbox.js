@@ -268,11 +268,53 @@
       align-self: flex-end;
       background: linear-gradient(135deg, #245a55, #1a3f4a);
       border: 1px solid rgba(46, 196, 182, 0.35);
+      color: #f2f7f6;
     }
     .bubble.assistant {
       align-self: flex-start;
-      background: var(--panel-2);
-      border: 1px solid var(--line);
+      background: #243441;
+      border: 1px solid rgba(232, 240, 245, 0.14);
+      /* Explicit near-white — do not rely on host inheritance (page CSS can muddy it). */
+      color: #f4f7f9;
+    }
+    .bubble.assistant a {
+      color: var(--accent);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .bubble.assistant strong,
+    .bubble.assistant b {
+      color: #ffffff;
+      font-weight: 700;
+    }
+    .bubble.assistant em,
+    .bubble.assistant i {
+      color: #e8eef2;
+    }
+    .bubble.assistant code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      color: #dff7f3;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(46, 196, 182, 0.25);
+      border-radius: 6px;
+      padding: 1px 5px;
+    }
+    .bubble.assistant p,
+    .bubble.assistant li,
+    .bubble.assistant ul,
+    .bubble.assistant ol {
+      color: inherit;
+      margin: 0 0 0.45em;
+    }
+    .bubble.assistant ul,
+    .bubble.assistant ol {
+      padding-left: 1.2em;
+    }
+    .bubble.assistant p:last-child,
+    .bubble.assistant ul:last-child,
+    .bubble.assistant ol:last-child {
+      margin-bottom: 0;
     }
     .bubble.system {
       align-self: center;
@@ -286,7 +328,10 @@
       display: block;
       margin-top: 6px;
       font-size: 11px;
-      color: var(--muted);
+      color: #9eb3c0;
+    }
+    .bubble.assistant .meta {
+      color: #a8bcc8;
     }
 
     .error, .hint {
@@ -562,7 +607,11 @@
     for (const msg of messages) {
       const bubble = document.createElement("div");
       bubble.className = `bubble ${msg.role}`;
-      bubble.textContent = msg.content;
+      if (msg.role === "assistant") {
+        bubble.innerHTML = formatAssistantHtml(msg.content);
+      } else {
+        bubble.textContent = msg.content;
+      }
       if (msg.source) {
         const meta = document.createElement("span");
         meta.className = "meta";
@@ -781,5 +830,30 @@
 
   function truncate(s, n) {
     return s.length > n ? `${s.slice(0, n - 1)}…` : s;
+  }
+
+  /** Escape HTML, then apply a tiny markdown subset for assistant bubbles. */
+  function formatAssistantHtml(raw) {
+    let s = escapeHtml(String(raw ?? ""));
+    // Links: [label](https://…)
+    s = s.replace(
+      /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
+    );
+    // Bold / italic / inline code
+    s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    s = s.replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+    s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+    // Simple bullet lines
+    s = s.replace(/(^|\n)[-*] (.+)/g, "$1• $2");
+    return s;
+  }
+
+  function escapeHtml(s) {
+    return s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
   }
 })();
