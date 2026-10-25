@@ -1,11 +1,12 @@
 import { API_BASE_URL, DEFAULT_SETTINGS } from "../shared/defaults.js";
 
-const CHAT_PATH = "/api/chat";
+/** Dedicated extension path — not the in-app `/api/chat` assistant. */
+const CHAT_PATH = "/api/extension/chat";
 const REQUEST_TIMEOUT_MS = 90_000;
-const THREAD_STORAGE_KEY = "medailyThreadId";
+const THREAD_STORAGE_KEY = "medailyCopilotThreadId";
 
 /**
- * Call medaily-ai chat endpoint (live only).
+ * Call medaily-ai extension Copilot endpoint (isolated from in-app assistant).
  *
  * @param {object} payload
  * @param {Array<{role: string, content: string}>} payload.messages
@@ -22,7 +23,7 @@ export async function askMedaily(payload, settings) {
     );
   }
 
-  const userId = await ensureUserId(cfg);
+  const userId = await ensureCopilotUserId(cfg);
   const message = buildApiMessage(payload, cfg.maxPageTextChars);
   if (!message) {
     throw new Error("Nothing to send — empty question");
@@ -32,9 +33,10 @@ export async function askMedaily(payload, settings) {
   const url = `${base}${CHAT_PATH}`;
   const threadId = await readStoredThreadId();
   const body = {
-    message: message.slice(0, 2000),
+    message,
     userId,
     timezone: guessTimezone(),
+    history: buildHistory(payload.messages),
   };
   if (threadId) body.threadId = threadId;
 
@@ -64,7 +66,10 @@ export async function askMedaily(payload, settings) {
       await storeThreadId(data.threadId);
     }
 
-    const reply = pickReplyText(data);
+    const reply =
+      typeof data?.answer === "string" && data.answer.trim()
+        ? data.answer
+        : null;
     if (!reply) {
       throw new Error("medaily-ai response missing answer text");
     }
@@ -79,37 +84,31 @@ export async function askMedaily(payload, settings) {
   }
 }
 
-/** Reset the persisted agent thread (e.g. after clearing the chat UI). */
+/** Reset the persisted agent thread. */
 export async function clearMedailyThread() {
   await chrome.storage.session.remove(THREAD_STORAGE_KEY).catch(async () => {
     await chrome.storage.local.remove(THREAD_STORAGE_KEY);
   });
 }
 
-function pickReplyText(data) {
-  if (typeof data?.answer === "string" && data.answer.trim()) {
-    return data.answer;
-  }
-
-  // Filing turns stop without an answer — surface the router's reason instead.
-  const filing = data?.decision?.filing;
-  if (filing && filing !== "none") {
-    const reason =
-      typeof data?.decision?.reason === "string" ? data.decision.reason.trim() : "";
-    return reason
-      ? `Looks like a note to file under “${filing}”. ${reason}`
-      : `Looks like a note to file under “${filing}” (no answer text from the agent).`;
-  }
-
-  if (typeof data?.decision?.reason === "string" && data.decision.reason.trim()) {
-    return data.decision.reason;
-  }
-
-  return null;
+/** Prior turns for the extension endpoint (excludes the latest user message). */
+function buildHistory(messages) {
+  const list = Array.isArray(messages) ? messages : [];
+  const prior = list.slice(0, -1).slice(-8);
+  return prior
+    .map((m) => {
+      const text = String(m?.content || "").trim();
+      if (!text) return null;
+      if (m.role === "user") return { role: "user", text: text.slice(0, 2000) };
+      if (m.role === "assistant")
+        return { role: "model", text: text.slice(0, 2000) };
+      return null;
+    })
+    .filter(Boolean);
 }
 
 /**
- * medaily-ai takes a single `message` string — fold page context into it.
+ * Page ground truth FIRST, then the question (API allows 4000 on extension path).
  */
 function buildApiMessage(payload, maxPageTextChars) {
   const lastUser = [...(payload.messages || [])]
@@ -119,28 +118,46 @@ function buildApiMessage(payload, maxPageTextChars) {
   if (!question) return "";
 
   const ctx = payload.context || {};
-  const parts = [question];
-  const meta = [];
-
-  if (ctx.title) meta.push(`Title: ${String(ctx.title).slice(0, 200)}`);
-  if (ctx.url) meta.push(`URL: ${String(ctx.url).slice(0, 300)}`);
-  const selection = (ctx.selection || "").trim();
-  if (selection) meta.push(`Selected text: ${selection.slice(0, 400)}`);
+  const url = String(ctx.url || "").slice(0, 500);
+  const title = String(ctx.title || "").slice(0, 240);
+  const selection = (ctx.selection || "").trim().slice(0, 500);
   const pageText = (ctx.pageText || "").replace(/\s+/g, " ").trim();
-  const budget = Math.max(200, Number(maxPageTextChars) || 4000);
-  if (pageText && !selection) {
-    meta.push(`Page excerpt: ${pageText.slice(0, Math.min(800, budget))}`);
+
+  const instruction = [
+    "[Browser Copilot]",
+    "You are a browser page assistant for the tab described below.",
+    "Treat [Current page] as ground truth for which site/page the user is on.",
+    "Answer using that page context. Do NOT claim you are the Medaily in-app assistant.",
+    "Do NOT suggest Ctrl+K / Ctrl+J / in-app navigation unless the page URL is the Medaily app itself.",
+  ].join(" ");
+
+  const pageLines = ["[Current page]"];
+  pageLines.push(`URL: ${url || "(unknown)"}`);
+  pageLines.push(`Title: ${title || "(untitled)"}`);
+  if (selection) pageLines.push(`Selected text: ${selection}`);
+
+  const prefix = [instruction, "", ...pageLines, ""].join("\n");
+  const questionBlock = `[User question]\n${question}`;
+  const remaining = Math.max(0, 4000 - prefix.length - questionBlock.length - 24);
+  const excerptBudget = Math.min(
+    remaining,
+    Math.max(120, Number(maxPageTextChars) || 4000)
+  );
+  if (!selection && pageText && excerptBudget > 40) {
+    pageLines.push(`Excerpt: ${pageText.slice(0, excerptBudget)}`);
   }
 
-  if (meta.length) {
-    parts.push("", "[Page context]", ...meta);
-  }
-
-  return parts.join("\n").trim();
+  return [instruction, "", ...pageLines, "", questionBlock].join("\n").slice(0, 4000);
 }
 
-async function ensureUserId(cfg) {
+/**
+ * Always a Copilot-owned UUID in sync storage. Never Medaily session id.
+ */
+async function ensureCopilotUserId(cfg) {
   if (isUuid(cfg.userId)) return cfg.userId;
+
+  const stored = await chrome.storage.sync.get({ userId: "" });
+  if (isUuid(stored.userId)) return stored.userId;
 
   const generated = crypto.randomUUID();
   await chrome.storage.sync.set({ userId: generated });
@@ -163,7 +180,7 @@ async function readStoredThreadId() {
       return session[THREAD_STORAGE_KEY];
     }
   } catch {
-    // session storage may be unavailable in older Chromium — fall through
+    // fall through
   }
   const local = await chrome.storage.local.get(THREAD_STORAGE_KEY);
   return typeof local[THREAD_STORAGE_KEY] === "string"

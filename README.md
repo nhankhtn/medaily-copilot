@@ -25,32 +25,32 @@ Click the extension icon to open settings:
 
 The API host is fixed at `https://ai.medaily.id.vn` (not editable in the popup).
 
-A stable `userId` UUID is created automatically on first live call and stored in `chrome.storage.sync` (required by medaily-ai). Replace it with a real Medaily user UUID if you want the agent to read that person's data.
+A dedicated Copilot `userId` UUID is created automatically and stored in `chrome.storage.sync`. It is **not** your Medaily login id. Copilot calls a **separate** AI path that never uses the in-app assistant prompt, never files finance/plan notes, and never reads your Medaily ledger/goals tables.
 
 ## medaily-ai request / response
 
 ```http
-POST https://ai.medaily.id.vn/api/chat
+POST https://ai.medaily.id.vn/api/extension/chat
 Content-Type: application/json
 Authorization: Bearer {apiKey}
 ```
 
 ```json
 {
-  "message": "What is this page about?\n\n[Page context]\nTitle: …\nURL: …",
-  "userId": "00000000-0000-4000-8000-000000000000",
-  "threadId": "optional-from-previous-reply",
-  "timezone": "Asia/Ho_Chi_Minh"
+  "message": "[Browser Copilot] …\n\n[Current page]\nURL: …\nTitle: …\n\n[User question]\n…",
+  "userId": "copilot-uuid",
+  "threadId": "optional",
+  "history": [{ "role": "user", "text": "…" }]
 }
 ```
 
-Response field used for the chat bubble:
+Response:
 
 ```json
-{ "answer": "This page explains…", "threadId": "…" }
+{ "answer": "Bạn đang ở Facebook (https://…).", "threadId": "…" }
 ```
 
-The product web app streams the same body via `POST /api/chat/live` through its own BFF; the extension uses the non-streaming `/api/chat` JSON route.
+The product app still uses `POST /api/chat/live` via its BFF — unchanged.
 
 ## Project layout
 

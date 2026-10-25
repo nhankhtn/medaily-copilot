@@ -6,6 +6,7 @@ export const API_BASE_URL = "https://ai.medaily.id.vn";
 export const DEFAULT_SETTINGS = {
   apiBaseUrl: API_BASE_URL,
   apiKey: "",
+  /** Dedicated Copilot UUID — never the Medaily session user id. */
   userId: "",
   useMock: false,
   maxPageTextChars: 4000,
@@ -14,20 +15,18 @@ export const DEFAULT_SETTINGS = {
 };
 
 /**
- * Real medaily-ai contract (POST {API_BASE_URL}/api/chat):
+ * Extension contract (POST {API_BASE_URL}/api/extension/chat):
  *
- * Request:
  * {
- *   message: string,          // 1–2000 chars; page context folded into this
- *   userId: string,           // UUID — whose data the agent may read
- *   threadId?: string,        // omit to start; send back to continue
- *   timezone?: string         // IANA name
+ *   message: string,     // [Browser Copilot] + [Current page] + [User question]
+ *   userId?: uuid,       // Copilot-only
+ *   threadId?: string,
+ *   history?: [{ role: "user"|"model", text: string }]
  * }
  *
- * Response:
- * { threadId, answer, decision?, models?, turns? }
+ * Response: { threadId, answer, model, decision: { filing: "none", ... } }
  *
- * Auth: Authorization: Bearer <SERVICE_TOKEN> (extension "API key")
+ * Auth: Authorization: Bearer <SERVICE_TOKEN>
  *
- * Product FE streams the same body via POST /api/chat/live (SSE).
+ * This path does NOT use the in-app /api/chat graph, filing router, or GUIDE.
  */

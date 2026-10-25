@@ -7,7 +7,7 @@ chrome.runtime.onInstalled.addListener(async () => {
   for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
     if (existing[key] === undefined) patch[key] = value;
   }
-  // Stable agent userId (required by POST /api/chat). Generated once.
+  // Copilot-only UUID (required by POST /api/chat). Never the Medaily session id.
   if (!existing.userId) {
     patch.userId = crypto.randomUUID();
   }
