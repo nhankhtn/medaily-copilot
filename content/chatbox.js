@@ -1009,11 +1009,6 @@
       els.subtitle.title = "Local Copilot history";
       return;
     }
-    if (panelMode === "agent") {
-      els.subtitle.textContent = "Agent mode";
-      els.subtitle.title = "Perceive → plan → confirm → act";
-      return;
-    }
     const ctx = collectContext();
     const title = (ctx.title || "").trim() || location.hostname || "this page";
     const kindLabel =

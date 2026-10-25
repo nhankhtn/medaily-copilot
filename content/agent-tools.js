@@ -56,16 +56,160 @@
       el.getAttribute("title") ||
       el.getAttribute("placeholder") ||
       el.getAttribute("name") ||
+      el.getAttribute("data-placeholder") ||
       (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 80)
     );
+  }
+
+  function contentEditableAttr(el) {
+    if (!el || el.nodeType !== 1) return null;
+    const raw = el.getAttribute("contenteditable");
+    if (raw === null) return null;
+    return raw.toLowerCase();
+  }
+
+  /** True for input/textarea/contenteditable (incl. empty contenteditable=""). */
+  function isDirectlyEditable(el) {
+    if (!el || el.nodeType !== 1) return false;
+    if (el.closest?.("#medaily-copilot-root")) return false;
+    const tag = el.tagName;
+    if (tag === "TEXTAREA") return !el.disabled && !el.readOnly;
+    if (tag === "INPUT") {
+      const type = (el.type || "text").toLowerCase();
+      return (
+        ["text", "search", "email", "url", "tel", "password", "number", ""].includes(
+          type
+        ) &&
+        !el.disabled &&
+        !el.readOnly
+      );
+    }
+    if (el.isContentEditable) return true;
+    const ce = contentEditableAttr(el);
+    return ce === "" || ce === "true" || ce === "plaintext-only";
+  }
+
+  /**
+   * If el is a wrapper (role=textbox / composer shell), prefer nested
+   * contenteditable / textarea / input (ChatGPT ProseMirror).
+   */
+  function deepestEditable(el) {
+    if (!el) return null;
+    if (isDirectlyEditable(el)) return el;
+    const nested = el.querySelector?.(
+      '[contenteditable="true"], [contenteditable=""], [contenteditable=plaintext-only], textarea, input:not([type=hidden]):not([type=submit]):not([type=button]), [role="textbox"][contenteditable]'
+    );
+    if (nested && isDirectlyEditable(nested)) return nested;
+    // role=textbox that is itself contenteditable after attr sync
+    const textboxes = el.querySelectorAll?.('[role="textbox"]') || [];
+    for (const tb of textboxes) {
+      if (isDirectlyEditable(tb)) return tb;
+      const inner = tb.querySelector?.(
+        '[contenteditable="true"], [contenteditable=""], .ProseMirror, p[data-placeholder], div[data-placeholder]'
+      );
+      if (inner) {
+        const editable =
+          isDirectlyEditable(inner)
+            ? inner
+            : inner.closest?.("[contenteditable]") ||
+              inner.querySelector?.("[contenteditable]");
+        if (editable && isDirectlyEditable(editable)) return editable;
+        // ProseMirror root often is the contenteditable
+        if (inner.classList?.contains("ProseMirror") && isDirectlyEditable(inner)) {
+          return inner;
+        }
+        const pm = el.querySelector?.(".ProseMirror[contenteditable], .ProseMirror");
+        if (pm && (isDirectlyEditable(pm) || contentEditableAttr(pm) !== "false")) {
+          return pm;
+        }
+      }
+    }
+    const pm = el.querySelector?.(".ProseMirror");
+    if (pm) return pm;
+    return isDirectlyEditable(el) ? el : null;
+  }
+
+  function findChatComposerFallback() {
+    const selectors = [
+      '#prompt-textarea',
+      '[data-testid="prompt-textarea"]',
+      'div.ProseMirror[contenteditable="true"]',
+      'div.ProseMirror[contenteditable=""]',
+      '[contenteditable="true"][role="textbox"]',
+      '[role="textbox"][contenteditable="true"]',
+      '[role="textbox"]',
+      'textarea[name="prompt-textarea"]',
+      'textarea[placeholder*="Message" i]',
+      'textarea[placeholder*="Ask" i]',
+    ];
+    for (const sel of selectors) {
+      try {
+        const el = document.querySelector(sel);
+        if (!el || !visible(el)) continue;
+        const editable = deepestEditable(el) || el;
+        if (editable && (isDirectlyEditable(editable) || editable.classList?.contains("ProseMirror"))) {
+          return editable;
+        }
+      } catch {
+        // ignore bad selectors
+      }
+    }
+    return null;
   }
 
   function listInteractive(args = {}) {
     const limit = Math.min(Number(args.limit) || 40, 80);
     refMap = new Map();
-    const selector =
-      'a[href], button, [role="button"], input, textarea, select, [contenteditable="true"], [role="link"], [role="textbox"], [role="menuitem"]';
-    const nodes = [...document.querySelectorAll(selector)].filter(visible);
+    const selector = [
+      "a[href]",
+      "button",
+      '[role="button"]',
+      "input:not([type=hidden])",
+      "textarea",
+      "select",
+      '[contenteditable="true"]',
+      '[contenteditable=""]',
+      '[contenteditable="plaintext-only"]',
+      ".ProseMirror",
+      '[role="link"]',
+      '[role="textbox"]',
+      '[role="menuitem"]',
+      '#prompt-textarea',
+    ].join(", ");
+    const raw = [...document.querySelectorAll(selector)].filter(visible);
+    /** Prefer actual editables; skip wrappers that only contain a listed child. */
+    const nodes = [];
+    const seen = new Set();
+    for (const el of raw) {
+      const target =
+        el.getAttribute("role") === "textbox" ||
+        el.classList?.contains("ProseMirror") ||
+        contentEditableAttr(el) !== null
+          ? deepestEditable(el) || el
+          : el;
+      // Dedupe: if we already listed the nested contenteditable, skip outer shell.
+      if (seen.has(target)) continue;
+      // Skip outer role=textbox when nested editable differs and will be listed.
+      if (
+        el !== target &&
+        el.getAttribute("role") === "textbox" &&
+        isDirectlyEditable(target)
+      ) {
+        // list the nested editable instead
+      }
+      if (
+        el !== target &&
+        raw.includes(target) &&
+        isDirectlyEditable(target) &&
+        !isDirectlyEditable(el)
+      ) {
+        // outer wrapper — skip; nested will appear as its own node
+        continue;
+      }
+      seen.add(target);
+      nodes.push(target);
+    }
+
     const items = [];
     let i = 0;
     for (const el of nodes) {
@@ -73,12 +217,16 @@
       const ref = `e${++i}`;
       el.setAttribute(REF_ATTR, ref);
       refMap.set(ref, el);
+      const editable = isDirectlyEditable(el) || el.classList?.contains("ProseMirror");
       items.push({
         ref,
         tag: el.tagName.toLowerCase(),
-        role: el.getAttribute("role") || el.tagName.toLowerCase(),
-        name: labelOf(el),
-        type: el.getAttribute("type") || undefined,
+        role:
+          el.getAttribute("role") ||
+          (editable ? "textbox" : el.tagName.toLowerCase()),
+        name: labelOf(el) || (editable ? "(composer)" : ""),
+        type: el.getAttribute("type") || (editable ? "editable" : undefined),
+        editable: Boolean(editable),
         css: cssPath(el).slice(0, 200),
       });
     }
@@ -86,45 +234,59 @@
   }
 
   function resolveTarget(args = {}) {
+    let el = null;
     if (args.ref && refMap.has(String(args.ref))) {
-      return refMap.get(String(args.ref));
+      el = refMap.get(String(args.ref));
+    } else if (args.ref) {
+      el = document.querySelector(
+        `[${REF_ATTR}="${CSS.escape(String(args.ref))}"]`
+      );
     }
-    if (args.ref) {
-      const byAttr = document.querySelector(`[${REF_ATTR}="${CSS.escape(String(args.ref))}"]`);
-      if (byAttr) return byAttr;
-    }
-    if (args.css) {
+    if (!el && args.css) {
       try {
-        const el = document.querySelector(String(args.css));
-        if (el) return el;
+        el = document.querySelector(String(args.css));
       } catch {
         // invalid selector
       }
     }
     const text = String(args.text || "").trim().toLowerCase();
     const role = String(args.role || "").trim().toLowerCase();
-    if (text || role) {
+    if (!el && (text || role)) {
       const candidates = [
         ...document.querySelectorAll(
-          'a[href], button, [role="button"], input, [role="link"], [role="menuitem"]'
+          'a[href], button, [role="button"], input, textarea, [role="textbox"], [contenteditable="true"], [contenteditable=""], .ProseMirror, [role="link"], [role="menuitem"]'
         ),
       ].filter(visible);
-      for (const el of candidates) {
-        const name = labelOf(el).toLowerCase();
-        const elRole = (el.getAttribute("role") || el.tagName).toLowerCase();
-        if (role && !elRole.includes(role) && el.tagName.toLowerCase() !== role) continue;
+      for (const cand of candidates) {
+        const name = labelOf(cand).toLowerCase();
+        const elRole = (cand.getAttribute("role") || cand.tagName).toLowerCase();
+        if (role && !elRole.includes(role) && cand.tagName.toLowerCase() !== role) {
+          continue;
+        }
         if (text && !name.includes(text) && !name.startsWith(text)) continue;
-        if (text || role) return el;
+        el = cand;
+        break;
       }
     }
-    return null;
+    return el || null;
+  }
+
+  /** Resolve + unwrap to a typeable control. */
+  function resolveEditableTarget(args = {}) {
+    const raw = resolveTarget(args);
+    let el = deepestEditable(raw);
+    if (!el && (!args || (!args.ref && !args.css && !args.text && !args.role))) {
+      el = deepestEditable(document.activeElement) || findChatComposerFallback();
+    }
+    if (!el && raw) el = deepestEditable(raw.parentElement) || findChatComposerFallback();
+    if (!el) el = findChatComposerFallback();
+    return el;
   }
 
   function click(args = {}) {
     const el = resolveTarget(args);
     if (!el) return { ok: false, error: "Target not found for click" };
     if (el.tagName === "A" && el.href) {
-      // Prefer in-page activation without forcing navigation via assign.
       el.focus();
       el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
       if (typeof el.click === "function") el.click();
@@ -136,35 +298,137 @@
     return { ok: true, method: "click", name: labelOf(el), css: cssPath(el) };
   }
 
+  function dispatchEditableInput(el, data, inputType) {
+    try {
+      el.dispatchEvent(
+        new InputEvent("beforeinput", {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          data,
+          inputType: inputType || "insertText",
+        })
+      );
+    } catch {
+      // older engines
+    }
+    try {
+      el.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          cancelable: false,
+          composed: true,
+          data,
+          inputType: inputType || "insertText",
+        })
+      );
+    } catch {
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  }
+
+  function typeIntoContentEditable(el, text, clear) {
+    el.focus();
+    // Click to ensure ProseMirror/ChatGPT attaches selection.
+    el.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window })
+    );
+    el.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window })
+    );
+    el.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true, view: window })
+    );
+
+    try {
+      const sel = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      if (clear) {
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+        // Prefer execCommand paths React/ProseMirror often observe.
+        const okDelete = document.execCommand("delete", false, null);
+        if (!okDelete) {
+          document.execCommand("selectAll", false, null);
+          document.execCommand("delete", false, null);
+        }
+      } else {
+        range.collapse(false);
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+      }
+    } catch {
+      // ignore selection failures
+    }
+
+    let inserted = false;
+    try {
+      inserted = document.execCommand("insertText", false, text);
+    } catch {
+      inserted = false;
+    }
+
+    if (!inserted) {
+      try {
+        dispatchEditableInput(el, text, clear ? "insertReplacementText" : "insertText");
+        if (clear) {
+          el.textContent = text;
+          // Keep a paragraph for ProseMirror-like editors
+          if (!el.childNodes.length) {
+            const p = document.createElement("p");
+            p.textContent = text;
+            el.appendChild(p);
+          }
+        } else {
+          el.textContent = `${el.textContent || ""}${text}`;
+        }
+        inserted = true;
+      } catch {
+        el.innerText = clear ? text : `${el.innerText || ""}${text}`;
+        inserted = true;
+      }
+    }
+
+    dispatchEditableInput(el, text, "insertText");
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return inserted;
+  }
+
   function typeInto(args = {}) {
     const text = String(args.text ?? "");
-    const el = resolveTarget(args) || document.activeElement;
+    const el = resolveEditableTarget(args);
     if (!el || el === document.body) {
       return { ok: false, error: "No input target for type" };
     }
-    el.focus?.();
+
     const clear = args.clear !== false;
-    if (el.isContentEditable) {
-      if (clear) {
-        try {
-          document.execCommand("selectAll", false, null);
-          document.execCommand("insertText", false, text);
-        } catch {
-          el.textContent = text;
-        }
-      } else {
-        try {
-          document.execCommand("insertText", false, text);
-        } catch {
-          el.textContent = (el.textContent || "") + text;
-        }
-      }
-      el.dispatchEvent(new InputEvent("input", { bubbles: true, data: text }));
-      return { ok: true, method: "type", css: cssPath(el) };
+    const tag = el.tagName;
+    const ce = contentEditableAttr(el);
+    const asContentEditable =
+      el.isContentEditable ||
+      ce === "" ||
+      ce === "true" ||
+      ce === "plaintext-only" ||
+      el.classList?.contains("ProseMirror") ||
+      el.getAttribute("role") === "textbox";
+
+    if (asContentEditable && tag !== "INPUT" && tag !== "TEXTAREA") {
+      // If role=textbox wrapper slipped through, unwrap again.
+      const target = deepestEditable(el) || el;
+      typeIntoContentEditable(target, text, clear);
+      return {
+        ok: true,
+        method: "type",
+        kind: "contenteditable",
+        css: cssPath(target),
+      };
     }
-    if ("value" in el) {
+
+    if (tag === "INPUT" || tag === "TEXTAREA" || "value" in el) {
+      el.focus?.();
       const proto =
-        el.tagName === "TEXTAREA"
+        tag === "TEXTAREA"
           ? HTMLTextAreaElement.prototype
           : HTMLInputElement.prototype;
       const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
@@ -173,9 +437,24 @@
       else el.value = next;
       el.dispatchEvent(new Event("input", { bubbles: true }));
       el.dispatchEvent(new Event("change", { bubbles: true }));
-      return { ok: true, method: "type", css: cssPath(el) };
+      return { ok: true, method: "type", kind: "value", css: cssPath(el) };
     }
-    return { ok: false, error: "Element is not editable" };
+
+    // Last resort: try contenteditable path anyway (some hosts lie about flags).
+    try {
+      typeIntoContentEditable(el, text, clear);
+      return {
+        ok: true,
+        method: "type",
+        kind: "fallback-contenteditable",
+        css: cssPath(el),
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        error: `Element is not editable (${err?.message || "unknown"})`,
+      };
+    }
   }
 
   function pressKey(args = {}) {
