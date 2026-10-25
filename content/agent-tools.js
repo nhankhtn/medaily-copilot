@@ -459,7 +459,11 @@
 
   function pressKey(args = {}) {
     const key = String(args.key || "Enter");
-    const el = resolveTarget(args) || document.activeElement || document.body;
+    const el =
+      resolveEditableTarget(args) ||
+      resolveTarget(args) ||
+      document.activeElement ||
+      document.body;
     el.focus?.();
     const init = {
       key,
