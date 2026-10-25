@@ -1,9 +1,11 @@
 import { API_BASE_URL, DEFAULT_SETTINGS } from "../shared/defaults.js";
 
-/** Dedicated extension path — not the in-app `/api/chat` assistant. */
+/** Dedicated extension paths — not the in-app `/api/chat` assistant. */
 const CHAT_PATH = "/api/extension/chat";
+const AGENT_PATH = "/api/extension/agent";
 const REQUEST_TIMEOUT_MS = 90_000;
 const THREAD_STORAGE_KEY = "medailyCopilotThreadId";
+const AGENT_THREAD_STORAGE_KEY = "medailyCopilotAgentThreadId";
 
 /**
  * Call medaily-ai extension Copilot endpoint (isolated from in-app assistant).
@@ -212,5 +214,100 @@ function guessTimezone() {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Ho_Chi_Minh";
   } catch {
     return "Asia/Ho_Chi_Minh";
+  }
+}
+
+/**
+ * Call medaily-ai extension agent planner (tool plan only; extension executes).
+ *
+ * @param {{ goal: string, pageSnapshot: string, toolHistory?: string, caps?: {insert?: boolean, send?: boolean} }} payload
+ * @param {typeof DEFAULT_SETTINGS} settings
+ */
+export async function planAgent(payload, settings) {
+  const cfg = { ...DEFAULT_SETTINGS, ...settings };
+  const apiKey = String(cfg.apiKey || "").trim();
+  if (!apiKey) {
+    throw new Error(
+      "API key missing — open Medaily Copilot settings and paste your SERVICE_TOKEN."
+    );
+  }
+
+  const userId = await ensureCopilotUserId(cfg);
+  const goal = String(payload?.goal || "").trim();
+  if (!goal) throw new Error("Agent goal is empty");
+
+  const base = API_BASE_URL.replace(/\/+$/, "");
+  const url = `${base}${AGENT_PATH}`;
+  const threadId = await readStoredAgentThreadId();
+  const body = {
+    goal: goal.slice(0, 2000),
+    pageSnapshot: String(payload?.pageSnapshot || "").slice(0, 16000),
+    userId,
+  };
+  if (payload?.toolHistory) {
+    body.toolHistory = String(payload.toolHistory).slice(0, 12000);
+  }
+  if (payload?.caps) body.caps = payload.caps;
+  if (threadId) body.threadId = threadId;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(
+        `medaily-ai agent HTTP ${res.status}${text ? `: ${text.slice(0, 200)}` : ""}`
+      );
+    }
+
+    const data = await res.json();
+    if (typeof data?.threadId === "string" && data.threadId) {
+      await storeAgentThreadId(data.threadId);
+    }
+
+    return {
+      done: Boolean(data?.done),
+      assistantMessage: String(data?.assistantMessage || ""),
+      actions: Array.isArray(data?.actions) ? data.actions : [],
+      model: typeof data?.model === "string" ? data.model : undefined,
+      threadId: typeof data?.threadId === "string" ? data.threadId : undefined,
+      source: "api",
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function readStoredAgentThreadId() {
+  try {
+    const session = await chrome.storage.session.get(AGENT_THREAD_STORAGE_KEY);
+    if (typeof session[AGENT_THREAD_STORAGE_KEY] === "string") {
+      return session[AGENT_THREAD_STORAGE_KEY];
+    }
+  } catch {
+    // fall through
+  }
+  const local = await chrome.storage.local.get(AGENT_THREAD_STORAGE_KEY);
+  return typeof local[AGENT_THREAD_STORAGE_KEY] === "string"
+    ? local[AGENT_THREAD_STORAGE_KEY]
+    : "";
+}
+
+async function storeAgentThreadId(threadId) {
+  try {
+    await chrome.storage.session.set({ [AGENT_THREAD_STORAGE_KEY]: threadId });
+  } catch {
+    await chrome.storage.local.set({ [AGENT_THREAD_STORAGE_KEY]: threadId });
   }
 }

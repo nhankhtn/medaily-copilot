@@ -21,6 +21,10 @@
   let pendingSendConfirm = false;
   /** @type {"chat"|"history"} */
   let viewMode = "chat";
+  /** @type {"chat"|"agent"} */
+  let panelMode = "chat";
+  /** @type {null | ((v: "approve"|"skip"|"stop") => void)} */
+  let confirmResolver = null;
   /** @type {{id: string, title: string, url: string, pageTitle: string, updatedAt: number, threadId?: string, messages: object[]}[]} */
   let historyList = [];
   /** Local session id for the open chat (history entry). */
@@ -303,6 +307,107 @@
       color: var(--accent);
     }
     .text-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    .mode-bar {
+      display: flex;
+      gap: 4px;
+      padding: 8px 12px 0;
+      flex-shrink: 0;
+    }
+    .mode-btn {
+      flex: 1;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 7px 8px;
+      cursor: pointer;
+    }
+    .mode-btn:hover { color: var(--text); background: var(--panel-2); }
+    .mode-btn.active {
+      border-color: rgba(46, 196, 182, 0.45);
+      color: var(--accent);
+      background: rgba(46, 196, 182, 0.12);
+    }
+
+    .agent-body {
+      display: none;
+      flex-direction: column;
+      min-height: 0;
+      flex: 0 1 auto;
+    }
+    .agent-body[data-open="true"] { display: flex; }
+    .agent-log {
+      max-height: min(280px, calc(100vh - 260px));
+      overflow-y: auto;
+      padding: 8px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 12.5px;
+      line-height: 1.4;
+    }
+    .agent-line {
+      padding: 6px 8px;
+      border-radius: 8px;
+      background: rgba(36, 52, 65, 0.55);
+      color: #e8eef2;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .agent-line.user { border-left: 3px solid var(--accent); }
+    .agent-line.assistant { border-left: 3px solid var(--accent-2); }
+    .agent-line.system { color: var(--muted); }
+    .agent-line.ok { border-left: 3px solid #3dd68c; }
+    .agent-line.err { border-left: 3px solid var(--danger); color: #ffb4b4; }
+    .agent-status {
+      margin: 0 12px 6px;
+      font-size: 11.5px;
+      color: #b7e6df;
+    }
+    .agent-confirm {
+      display: none;
+      margin: 0 12px 8px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(244, 162, 97, 0.45);
+      background: rgba(244, 162, 97, 0.1);
+      flex-direction: column;
+      gap: 8px;
+    }
+    .agent-confirm[data-open="true"] { display: flex; }
+    .agent-confirm h4 {
+      margin: 0;
+      font-size: 13px;
+      font-family: "Syne", sans-serif;
+    }
+    .agent-confirm p {
+      margin: 0;
+      font-size: 12.5px;
+      color: #f0d0b0;
+      line-height: 1.4;
+    }
+    .agent-confirm-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      justify-content: flex-end;
+    }
+    .agent-confirm-row button {
+      border: 0;
+      border-radius: 10px;
+      padding: 7px 12px;
+      font: inherit;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .agent-approve { background: var(--accent); color: #062a28; }
+    .agent-skip { background: var(--panel-2); color: var(--text); }
+    .agent-stop { background: var(--danger); color: #1a0505; }
 
     .chat-body {
       flex: 0 1 auto;
@@ -775,8 +880,25 @@
         </button>
       </div>
     </header>
+    <div class="mode-bar" data-el="mode-bar">
+      <button type="button" class="mode-btn active" data-mode="chat">Chat</button>
+      <button type="button" class="mode-btn" data-mode="agent">Agent</button>
+    </div>
     <div class="chat-body" data-el="chat-body" data-empty="true">
       <div class="messages" data-el="messages" aria-live="polite"></div>
+    </div>
+    <div class="agent-body" data-el="agent-body" data-open="false">
+      <div class="agent-log" data-el="agent-log" aria-live="polite"></div>
+      <div class="agent-status" data-el="agent-status">Agent idle — mô tả mục tiêu rồi Run.</div>
+      <div class="agent-confirm" data-el="agent-confirm" data-open="false">
+        <h4 data-el="agent-confirm-title">Confirm action</h4>
+        <p data-el="agent-confirm-body"></p>
+        <div class="agent-confirm-row">
+          <button type="button" class="agent-stop" data-el="agent-stop">Stop</button>
+          <button type="button" class="agent-skip" data-el="agent-skip">Skip</button>
+          <button type="button" class="agent-approve" data-el="agent-approve">Approve</button>
+        </div>
+      </div>
     </div>
     <div class="history-view" data-el="history-view" data-open="false"></div>
     <div class="hint" data-el="hint" hidden></div>
@@ -810,8 +932,18 @@
     history: panel.querySelector('[data-el="history"]'),
     close: panel.querySelector('[data-el="close"]'),
     hide: panel.querySelector('[data-el="hide"]'),
+    modeBar: panel.querySelector('[data-el="mode-bar"]'),
     chatBody: panel.querySelector('[data-el="chat-body"]'),
     messages: panel.querySelector('[data-el="messages"]'),
+    agentBody: panel.querySelector('[data-el="agent-body"]'),
+    agentLog: panel.querySelector('[data-el="agent-log"]'),
+    agentStatus: panel.querySelector('[data-el="agent-status"]'),
+    agentConfirm: panel.querySelector('[data-el="agent-confirm"]'),
+    agentConfirmTitle: panel.querySelector('[data-el="agent-confirm-title"]'),
+    agentConfirmBody: panel.querySelector('[data-el="agent-confirm-body"]'),
+    agentApprove: panel.querySelector('[data-el="agent-approve"]'),
+    agentSkip: panel.querySelector('[data-el="agent-skip"]'),
+    agentStop: panel.querySelector('[data-el="agent-stop"]'),
     historyView: panel.querySelector('[data-el="history-view"]'),
     hint: panel.querySelector('[data-el="hint"]'),
     status: panel.querySelector('[data-el="status"]'),
@@ -865,6 +997,11 @@
     if (viewMode === "history") {
       els.subtitle.textContent = "History";
       els.subtitle.title = "Local Copilot history";
+      return;
+    }
+    if (panelMode === "agent") {
+      els.subtitle.textContent = "Agent mode";
+      els.subtitle.title = "Perceive → plan → confirm → act";
       return;
     }
     const ctx = collectContext();
@@ -1371,17 +1508,44 @@
     }
   }
 
+  function setPanelMode(mode) {
+    panelMode = mode === "agent" ? "agent" : "chat";
+    if (viewMode === "history") viewMode = "chat";
+    els.modeBar.querySelectorAll("[data-mode]").forEach((btn) => {
+      btn.classList.toggle("active", btn.getAttribute("data-mode") === panelMode);
+    });
+    els.input.placeholder =
+      panelMode === "agent"
+        ? "Mục tiêu agent… (vd: click the Login button)"
+        : "Ask about this page…";
+    els.send.textContent = panelMode === "agent" ? "Run" : "Ask";
+    updateSubtitle();
+    render();
+  }
+
   function render() {
     const inHistory = viewMode === "history";
+    const inAgent = !inHistory && panelMode === "agent";
     const hasChatContent = messages.length > 0 || loading;
     syncCapabilityUi();
-    els.chatBody.setAttribute("data-hidden", inHistory ? "true" : "false");
+    els.modeBar.hidden = inHistory;
+    els.chatBody.setAttribute(
+      "data-hidden",
+      inHistory || inAgent ? "true" : "false"
+    );
     els.chatBody.setAttribute("data-empty", hasChatContent ? "false" : "true");
-    els.actions.setAttribute("data-hidden", inHistory ? "true" : "false");
+    els.agentBody.setAttribute("data-open", inAgent ? "true" : "false");
+    els.actions.setAttribute(
+      "data-hidden",
+      inHistory || inAgent ? "true" : "false"
+    );
     els.form.setAttribute("data-hidden", inHistory ? "true" : "false");
     els.historyView.setAttribute("data-open", inHistory ? "true" : "false");
     els.history.classList.toggle("active", inHistory);
-    panel.setAttribute("data-compact", !inHistory && !hasChatContent ? "true" : "false");
+    panel.setAttribute(
+      "data-compact",
+      !inHistory && !inAgent && !hasChatContent ? "true" : "false"
+    );
 
     if (inHistory) {
       renderHistoryView();
@@ -1438,7 +1602,7 @@
       els.hint.textContent = "";
     }
 
-    const pageStatus = !inHistory ? buildPageStatus() : "";
+    const pageStatus = !inHistory && !inAgent ? buildPageStatus() : "";
     if (pageStatus && !errorText) {
       els.status.hidden = false;
       els.status.textContent = pageStatus;
@@ -1908,8 +2072,89 @@
 
   els.form.addEventListener("submit", (e) => {
     e.preventDefault();
+    if (panelMode === "agent") {
+      startAgentRun(els.input.value);
+      return;
+    }
     sendMessage(els.input.value);
   });
+
+  els.modeBar.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-mode]");
+    if (!btn) return;
+    setPanelMode(btn.getAttribute("data-mode"));
+  });
+
+  function resolveAgentConfirm(decision) {
+    els.agentConfirm.setAttribute("data-open", "false");
+    const resolve = confirmResolver;
+    confirmResolver = null;
+    resolve?.(decision);
+  }
+
+  els.agentApprove.addEventListener("click", () => resolveAgentConfirm("approve"));
+  els.agentSkip.addEventListener("click", () => resolveAgentConfirm("skip"));
+  els.agentStop.addEventListener("click", () => {
+    globalThis.MedailyAgentRuntime?.stop?.();
+    resolveAgentConfirm("stop");
+  });
+
+  function appendAgentLog(line, kind = "system") {
+    const row = document.createElement("div");
+    row.className = `agent-line ${kind}`;
+    row.textContent = String(line || "");
+    els.agentLog.appendChild(row);
+    els.agentLog.scrollTop = els.agentLog.scrollHeight;
+  }
+
+  function startAgentRun(goalText) {
+    const goal = String(goalText || "").trim();
+    if (!goal) {
+      errorText = "Nhập mục tiêu agent (vd: click the Login button).";
+      render();
+      return;
+    }
+    if (!globalThis.MedailyAgentRuntime) {
+      errorText = "Agent runtime chưa sẵn sàng — reload extension.";
+      render();
+      return;
+    }
+    errorText = "";
+    els.agentLog.innerHTML = "";
+    els.input.value = "";
+    panelMode = "agent";
+    setPanelMode("agent");
+    globalThis.MedailyAgentRuntime.run(goal);
+  }
+
+  // Wire agent UI once.
+  if (globalThis.MedailyAgentRuntime?.attach) {
+    globalThis.MedailyAgentRuntime.attach({
+      setStatus(s) {
+        els.agentStatus.textContent = s || "";
+      },
+      appendLog(line, kind) {
+        appendAgentLog(line, kind);
+      },
+      askConfirm(desc) {
+        return new Promise((resolve) => {
+          confirmResolver = resolve;
+          els.agentConfirmTitle.textContent = `Bước ${desc.step}/${desc.max}: ${desc.tool}`;
+          els.agentConfirmBody.textContent = [
+            desc.target ? `Target: ${desc.target}` : "",
+            desc.reason ? `Reason: ${desc.reason}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n");
+          els.agentConfirm.setAttribute("data-open", "true");
+        });
+      },
+      onDone(summary) {
+        appendAgentLog(summary || "Done.", "assistant");
+        els.send.disabled = false;
+      },
+    });
+  }
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && open) {

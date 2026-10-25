@@ -1,5 +1,11 @@
 import { API_BASE_URL, DEFAULT_SETTINGS } from "../shared/defaults.js";
-import { askMedaily } from "./medaily-client.js";
+import { askMedaily, planAgent } from "./medaily-client.js";
+import {
+  getRecent,
+  installWebRequestListener,
+} from "./network-buffer.js";
+
+installWebRequestListener();
 
 chrome.runtime.onInstalled.addListener(async () => {
   const existing = await chrome.storage.sync.get(null);
@@ -19,7 +25,7 @@ chrome.runtime.onInstalled.addListener(async () => {
   }
 });
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message !== "object") return false;
 
   if (message.type === "MEDAILY_GET_SETTINGS") {
@@ -47,10 +53,43 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .catch((err) =>
         sendResponse({
           ok: false,
-          error: err?.name === "AbortError" ? "Request timed out" : err?.message || String(err),
+          error:
+            err?.name === "AbortError"
+              ? "Request timed out"
+              : err?.message || String(err),
         })
       );
     return true;
+  }
+
+  if (message.type === "MEDAILY_AGENT_PLAN") {
+    handleAgentPlan(message.payload)
+      .then((result) => sendResponse({ ok: true, ...result }))
+      .catch((err) =>
+        sendResponse({
+          ok: false,
+          error:
+            err?.name === "AbortError"
+              ? "Request timed out"
+              : err?.message || String(err),
+        })
+      );
+    return true;
+  }
+
+  if (message.type === "MEDAILY_GET_NETWORK") {
+    const tabId = sender?.tab?.id;
+    if (typeof tabId !== "number") {
+      sendResponse({ ok: false, error: "No tab id for network buffer" });
+      return false;
+    }
+    try {
+      const requests = getRecent(tabId, message.limit);
+      sendResponse({ ok: true, requests });
+    } catch (err) {
+      sendResponse({ ok: false, error: err?.message || String(err) });
+    }
+    return false;
   }
 
   return false;
@@ -62,6 +101,18 @@ async function handleChat(payload) {
   }
   const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
   return askMedaily(payload, {
+    ...settings,
+    apiBaseUrl: API_BASE_URL,
+    useMock: false,
+  });
+}
+
+async function handleAgentPlan(payload) {
+  if (!payload || typeof payload.goal !== "string") {
+    throw new Error("Invalid agent payload");
+  }
+  const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
+  return planAgent(payload, {
     ...settings,
     apiBaseUrl: API_BASE_URL,
     useMock: false,

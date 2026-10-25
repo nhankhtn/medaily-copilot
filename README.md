@@ -66,15 +66,18 @@ shared/defaults.js             # Hardcoded AI host + settings defaults
 icons/                         # Extension icons
 ```
 
-## Page actions
+## Modes
+
+- **Chat** — Ask / Tóm tắt / Gợi ý; FB-only Chèn·Gửi (site registry)
+- **Agent** — goal → medaily-ai `/api/extension/agent` → confirm → tools (click/type/…); see harness docs
+
+## Page actions (Chat)
 
 Panel buttons (Vietnamese labels): **Tóm tắt**, **Gợi ý trả lời**, **Chèn**, **Gửi**.
 
 - Extractors: generic (any site), Facebook/Messenger thread, Gmail open email
-- Site registry (`content/site-registry.js`): **Chèn / Gửi chỉ trên Facebook & Messenger**; mọi site khác vẫn có Tóm tắt + Gợi ý + chat
-- “nhắn giúp / gửi giúp” → suggest flow; on FB each draft is a card with **Chèn** / **Gửi** (confirm before send)
-- **History** in the header — local `chrome.storage.local` threads; click to reopen
-- Drag the panel **header** to reposition (saved locally); FAB stays bottom-right
+- Site registry (`content/site-registry.js`): **Chèn / Gửi chỉ trên Facebook & Messenger**
+- **History** · drag header · FAB bottom-right
 
 ## Manual test checklist
 
