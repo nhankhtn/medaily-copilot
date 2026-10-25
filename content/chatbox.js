@@ -308,31 +308,6 @@
     }
     .text-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-    .mode-bar {
-      display: flex;
-      gap: 4px;
-      padding: 8px 12px 0;
-      flex-shrink: 0;
-    }
-    .mode-btn {
-      flex: 1;
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      background: transparent;
-      color: var(--muted);
-      font: inherit;
-      font-size: 12px;
-      font-weight: 700;
-      padding: 7px 8px;
-      cursor: pointer;
-    }
-    .mode-btn:hover { color: var(--text); background: var(--panel-2); }
-    .mode-btn.active {
-      border-color: rgba(46, 196, 182, 0.45);
-      color: var(--accent);
-      background: rgba(46, 196, 182, 0.12);
-    }
-
     .agent-body {
       display: none;
       flex-direction: column;
@@ -728,12 +703,45 @@
     }
 
     .composer {
-      padding: 10px 12px 12px;
+      padding: 8px 12px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: rgba(10, 14, 18, 0.35);
+      border-top: 1px solid var(--line);
+      flex-shrink: 0;
+    }
+    .composer-mode {
+      display: inline-flex;
+      align-self: flex-start;
+      gap: 0;
+      padding: 2px;
+      border-radius: 10px;
+      background: rgba(0, 0, 0, 0.28);
+      border: 1px solid var(--line);
+    }
+    .mode-btn {
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 11.5px;
+      font-weight: 700;
+      padding: 5px 12px;
+      cursor: pointer;
+      line-height: 1.2;
+    }
+    .mode-btn:hover { color: var(--text); }
+    .mode-btn.active {
+      color: #062a28;
+      background: var(--accent);
+    }
+    .composer-row {
       display: grid;
       grid-template-columns: 1fr auto;
       gap: 8px;
       align-items: end;
-      background: rgba(10, 14, 18, 0.35);
     }
     textarea {
       width: 100%;
@@ -880,10 +888,6 @@
         </button>
       </div>
     </header>
-    <div class="mode-bar" data-el="mode-bar">
-      <button type="button" class="mode-btn active" data-mode="chat">Chat</button>
-      <button type="button" class="mode-btn" data-mode="agent">Agent</button>
-    </div>
     <div class="chat-body" data-el="chat-body" data-empty="true">
       <div class="messages" data-el="messages" aria-live="polite"></div>
     </div>
@@ -918,8 +922,14 @@
       <button type="button" class="action-btn danger" data-action="send-page" data-cap="send" hidden>Gửi</button>
     </div>
     <form class="composer" data-el="form">
-      <textarea data-el="input" rows="2" placeholder="Ask about this page…" maxlength="4000"></textarea>
-      <button class="send" type="submit" data-el="send">Ask</button>
+      <div class="composer-mode" data-el="mode-bar" role="group" aria-label="Chat or Agent mode">
+        <button type="button" class="mode-btn active" data-mode="chat">Chat</button>
+        <button type="button" class="mode-btn" data-mode="agent">Agent</button>
+      </div>
+      <div class="composer-row">
+        <textarea data-el="input" rows="2" placeholder="Ask about this page…" maxlength="4000"></textarea>
+        <button class="send" type="submit" data-el="send">Ask</button>
+      </div>
     </form>
   `;
 
@@ -1528,7 +1538,8 @@
     const inAgent = !inHistory && panelMode === "agent";
     const hasChatContent = messages.length > 0 || loading;
     syncCapabilityUi();
-    els.modeBar.hidden = inHistory;
+    // Mode control lives in the composer — hide whole composer in History.
+    if (els.modeBar) els.modeBar.hidden = false;
     els.chatBody.setAttribute(
       "data-hidden",
       inHistory || inAgent ? "true" : "false"
