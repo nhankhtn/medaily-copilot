@@ -11,7 +11,10 @@
   let open = false;
   let loading = false;
   let errorText = "";
+  let hintText = "";
   let launcherHidden = false;
+  /** Content-script ceiling so a hung SW cannot leave the composer locked. */
+  const SEND_GUARD_MS = 95_000;
 
   const host = document.createElement("div");
   host.id = ROOT_ID;
@@ -43,7 +46,7 @@
       pointer-events: none;
     }
 
-    .dock, .panel, button, textarea {
+    .dock, .panel, .composer, .composer *, button, textarea, .icon-btn, .hide-fab {
       pointer-events: auto;
     }
 
@@ -51,8 +54,8 @@
       position: fixed;
       right: 20px;
       bottom: 20px;
-      width: 56px;
-      height: 56px;
+      width: 36px;
+      height: 36px;
       transition: opacity 180ms ease, transform 180ms ease;
     }
     .dock[data-hidden="true"] {
@@ -68,10 +71,10 @@
     }
 
     .launcher {
-      width: 56px;
-      height: 56px;
+      width: 36px;
+      height: 36px;
       border: 0;
-      border-radius: 18px;
+      border-radius: 12px;
       background: linear-gradient(145deg, #1c3140 0%, #0f1a22 55%, #16353a 100%);
       color: var(--text);
       box-shadow: var(--shadow), inset 0 0 0 1px rgba(46, 196, 182, 0.35);
@@ -80,19 +83,19 @@
       place-items: center;
       transition: transform 180ms ease, box-shadow 180ms ease;
     }
-    .launcher:hover { transform: translateY(-2px) scale(1.03); }
+    .launcher:hover { transform: translateY(-2px) scale(1.04); }
     .launcher:focus-visible {
       outline: 2px solid var(--accent);
-      outline-offset: 3px;
+      outline-offset: 2px;
     }
-    .launcher svg { width: 24px; height: 24px; }
+    .launcher svg { width: 16px; height: 16px; }
 
     .hide-fab {
       position: absolute;
-      top: -6px;
-      right: -6px;
-      width: 22px;
-      height: 22px;
+      top: -7px;
+      right: -7px;
+      width: 20px;
+      height: 20px;
       border: 0;
       border-radius: 999px;
       padding: 0;
@@ -102,7 +105,7 @@
       color: var(--muted);
       background: linear-gradient(145deg, #243441 0%, #152028 100%);
       box-shadow: 0 4px 12px rgba(8, 14, 20, 0.4), inset 0 0 0 1px rgba(46, 196, 182, 0.28);
-      opacity: 0.72;
+      opacity: 0.85;
       transition: opacity 140ms ease, color 140ms ease, transform 140ms ease;
     }
     .dock:hover .hide-fab,
@@ -110,12 +113,12 @@
       opacity: 1;
       color: var(--text);
     }
-    .hide-fab:hover { transform: scale(1.06); color: #ffb4b4; }
+    .hide-fab:hover { transform: scale(1.08); color: #ffb4b4; }
     .hide-fab:focus-visible {
       outline: 2px solid var(--accent);
       outline-offset: 2px;
     }
-    .hide-fab svg { width: 10px; height: 10px; display: block; }
+    .hide-fab svg { width: 9px; height: 9px; display: block; }
 
     .panel {
       position: fixed;
@@ -261,15 +264,22 @@
       color: var(--muted);
     }
 
-    .error {
+    .error, .hint {
       margin: 0 14px 8px;
       padding: 8px 10px;
       border-radius: 10px;
+      font-size: 12.5px;
+      line-height: 1.4;
+    }
+    .error {
       background: rgba(255, 107, 107, 0.12);
       border: 1px solid rgba(255, 107, 107, 0.35);
       color: #ffb4b4;
-      font-size: 12.5px;
-      line-height: 1.4;
+    }
+    .hint {
+      background: rgba(46, 196, 182, 0.1);
+      border: 1px solid rgba(46, 196, 182, 0.28);
+      color: #b7e6df;
     }
 
     .composer {
@@ -301,8 +311,6 @@
       border-color: rgba(46, 196, 182, 0.55);
       box-shadow: 0 0 0 3px rgba(46, 196, 182, 0.15);
     }
-    textarea:disabled { opacity: 0.65; }
-
     .send {
       height: 44px;
       min-width: 44px;
@@ -349,7 +357,7 @@
     }
 
     @media (max-width: 480px) {
-      .panel, .launcher { right: 12px; bottom: 12px; }
+      .panel, .dock { right: 12px; bottom: 12px; }
       .panel { width: calc(100vw - 24px); height: min(70vh, 560px); }
     }
   `;
@@ -414,6 +422,7 @@
       </div>
     </header>
     <div class="messages" data-el="messages" aria-live="polite"></div>
+    <div class="hint" data-el="hint" hidden></div>
     <div class="error" data-el="error" hidden></div>
     <form class="composer" data-el="form">
       <textarea data-el="input" rows="2" placeholder="Ask about this page…" maxlength="4000"></textarea>
@@ -429,6 +438,7 @@
     close: panel.querySelector('[data-el="close"]'),
     hide: panel.querySelector('[data-el="hide"]'),
     messages: panel.querySelector('[data-el="messages"]'),
+    hint: panel.querySelector('[data-el="hint"]'),
     error: panel.querySelector('[data-el="error"]'),
     form: panel.querySelector('[data-el="form"]'),
     input: panel.querySelector('[data-el="input"]'),
@@ -457,9 +467,29 @@
     launcher.setAttribute("aria-expanded", String(open));
     dock.setAttribute("data-expanded", String(open));
     if (open) {
+      refreshKeyHint();
       render();
-      queueMicrotask(() => els.input.focus());
+      queueMicrotask(() => {
+        // Never leave the field locked when the panel opens.
+        els.input.disabled = false;
+        els.input.removeAttribute("readonly");
+        els.input.focus();
+      });
     }
+  }
+
+  async function refreshKeyHint() {
+    try {
+      const stored = await chrome.storage.sync.get({ apiKey: "" });
+      const hasKey = Boolean(String(stored.apiKey || "").trim());
+      hintText = hasKey
+        ? ""
+        : "Add your SERVICE_TOKEN in the extension popup to get live replies.";
+    } catch {
+      hintText =
+        "Could not read settings — open the Medaily Copilot popup and save your API key.";
+    }
+    if (open) render();
   }
 
   function syncLauncherVisibility() {
@@ -527,6 +557,14 @@
       els.messages.appendChild(typing);
     }
 
+    if (hintText && !errorText) {
+      els.hint.hidden = false;
+      els.hint.textContent = hintText;
+    } else {
+      els.hint.hidden = true;
+      els.hint.textContent = "";
+    }
+
     if (errorText) {
       els.error.hidden = false;
       els.error.textContent = errorText;
@@ -535,7 +573,10 @@
       els.error.textContent = "";
     }
 
-    els.input.disabled = loading;
+    // Input stays usable even while a request is in flight or when no API key
+    // is configured — errors show in-panel instead of greying out the composer.
+    els.input.disabled = false;
+    els.input.removeAttribute("readonly");
     els.send.disabled = loading || !els.input.value.trim();
     els.messages.scrollTop = els.messages.scrollHeight;
   }
@@ -573,17 +614,42 @@
     els.input.value = "";
     render();
 
+    let guardTimer;
     try {
-      const response = await chrome.runtime.sendMessage({
-        type: "MEDAILY_CHAT",
-        payload: {
-          messages: messages.map(({ role, content: c }) => ({ role, content: c })),
-          context: collectContext(),
-        },
-      });
+      const response = await Promise.race([
+        chrome.runtime.sendMessage({
+          type: "MEDAILY_CHAT",
+          payload: {
+            messages: messages.map(({ role, content: c }) => ({
+              role,
+              content: c,
+            })),
+            context: collectContext(),
+          },
+        }),
+        new Promise((_, reject) => {
+          guardTimer = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  "Request timed out — check your API key in the popup, then try again."
+                )
+              ),
+            SEND_GUARD_MS
+          );
+        }),
+      ]);
 
-      if (!response?.ok) {
-        throw new Error(response?.error || "Unknown error from extension");
+      if (chrome.runtime.lastError) {
+        throw new Error(chrome.runtime.lastError.message);
+      }
+      if (!response) {
+        throw new Error(
+          "No reply from the extension — reload Medaily Copilot on chrome://extensions and try again."
+        );
+      }
+      if (!response.ok) {
+        throw new Error(response.error || "Unknown error from extension");
       }
 
       messages.push({
@@ -591,10 +657,15 @@
         content: response.reply,
         source: response.source,
       });
+      hintText = "";
     } catch (err) {
       errorText = err?.message || String(err);
+      await refreshKeyHint();
     } finally {
+      clearTimeout(guardTimer);
       loading = false;
+      els.input.disabled = false;
+      els.input.removeAttribute("readonly");
       render();
       els.input.focus();
     }
