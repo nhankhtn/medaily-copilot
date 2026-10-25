@@ -89,38 +89,6 @@ h1 span {
   box-shadow: 0 0 0 3px rgba(46, 196, 182, 0.15);
 }
 
-.toggle {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 10px;
-  align-items: start;
-  margin: 4px 0 14px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.02);
-  cursor: pointer;
-}
-
-.toggle input {
-  margin-top: 3px;
-  accent-color: var(--accent);
-}
-
-.toggle strong {
-  display: block;
-  font-size: 13px;
-  color: var(--text);
-}
-
-.toggle small {
-  display: block;
-  margin-top: 2px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.35;
-}
-
 .actions {
   display: flex;
   align-items: center;

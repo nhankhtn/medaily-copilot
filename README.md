@@ -1,8 +1,10 @@
 # Medaily Copilot
 
-Chromium Manifest V3 extension that injects a floating chat assistant on every page. Ask questions about the current page; the background service worker calls **medaily-ai** at `https://ai.medaily.id.vn` (or a built-in mock when Mock mode is on / no key is set).
+Chromium Manifest V3 extension that injects a floating chat assistant on every page. Ask questions about the current page; the background service worker calls **medaily-ai** at `https://ai.medaily.id.vn`.
 
 Built for **Ngô Nhân**.
+
+**Load unpacked path (canonical):** `/home/awish/workspace/me/code/medaily-copilot`
 
 ## Load unpacked in Chrome
 
@@ -16,23 +18,19 @@ Built for **Ngô Nhân**.
 
 Click the extension icon to open settings:
 
-| Setting | Default | Purpose |
-| --- | --- | --- |
-| API base URL | `https://ai.medaily.id.vn` | Origin of medaily-ai (no trailing slash required) |
-| API key | _(empty)_ | `SERVICE_TOKEN` — sent as `Authorization: Bearer <key>` |
-| Mock mode | **on** | Skip the network and invent replies from page context |
-| Chat launcher | visible | Small × on the FAB (or the eye-off control in the open panel) hides the launcher; restore via **Show chat launcher again** in the popup |
+| Setting | Purpose |
+| --- | --- |
+| API key | `SERVICE_TOKEN` — sent as `Authorization: Bearer <key>` (required) |
+| Chat launcher | Small × on the FAB (or the eye-off control in the open panel) hides the launcher; restore via **Show chat launcher again** |
 
-Mock mode stays on by default so the extension works with zero credentials. Turn it off, paste the service token, and leave the base URL at the production host to hit the real API.
+The API host is fixed at `https://ai.medaily.id.vn` (not editable in the popup).
 
 A stable `userId` UUID is created automatically on first live call and stored in `chrome.storage.sync` (required by medaily-ai). Replace it with a real Medaily user UUID if you want the agent to read that person's data.
 
 ## medaily-ai request / response
 
-Live calls:
-
 ```http
-POST {apiBaseUrl}/api/chat
+POST https://ai.medaily.id.vn/api/chat
 Content-Type: application/json
 Authorization: Bearer {apiKey}
 ```
@@ -59,21 +57,20 @@ The product web app streams the same body via `POST /api/chat/live` through its 
 ```
 manifest.json
 background/service-worker.js   # message router + storage bootstrap
-background/medaily-client.js   # HTTP client + mock fallback
+background/medaily-client.js   # live HTTP client
 content/chatbox.js             # Shadow DOM chat UI on every page
 content/chatbox.css            # Host-page isolation stub
-popup/                         # API URL / key / mock toggle
-shared/defaults.js             # Shared settings defaults + contract notes
+popup/                         # API key + show launcher
+shared/defaults.js             # Hardcoded AI host + settings defaults
 icons/                         # Extension icons
 ```
 
 ## Manual test checklist
 
 1. Load unpacked → open `https://example.com` → launcher appears bottom-right
-2. Open chat → empty state shows → ask “Summarize this page” → mock reply references the title/URL
-3. Select text on the page → ask about the selection → mock reply includes the selection
-4. Open the popup → turn Mock mode off without a key → Save shows a validation error
-5. Set API key to the real `SERVICE_TOKEN`, disable mock, keep base URL `https://ai.medaily.id.vn` → live reply appears (or a clear HTTP error banner)
+2. Open chat without an API key → clear error asking for SERVICE_TOKEN
+3. Paste SERVICE_TOKEN in the popup → Save → ask about the page → live reply (or clear HTTP error)
+4. Hide the FAB with × → popup **Show chat launcher again** restores it
 
 ## Notes
 

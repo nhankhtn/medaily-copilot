@@ -17,40 +17,20 @@
       <header class="hero">
         <p class="eyebrow">Settings</p>
         <h1>Medaily <span>Copilot</span></h1>
-        <p class="lede">Point the extension at your medaily-ai service, or keep Mock mode on for local demos.</p>
+        <p class="lede">Paste your SERVICE_TOKEN to talk to medaily-ai. The chat launcher can be hidden on pages and restored here.</p>
       </header>
 
       <form id="settings-form" novalidate>
-        <label class="field">
-          <span>API base URL</span>
-          <input
-            id="apiBaseUrl"
-            name="apiBaseUrl"
-            type="url"
-            placeholder="https://ai.medaily.id.vn"
-            autocomplete="off"
-            spellcheck="false"
-          />
-        </label>
-
         <label class="field">
           <span>API key</span>
           <input
             id="apiKey"
             name="apiKey"
             type="password"
-            placeholder="SERVICE_TOKEN (optional in mock mode)"
+            placeholder="SERVICE_TOKEN"
             autocomplete="off"
             spellcheck="false"
           />
-        </label>
-
-        <label class="toggle">
-          <input id="useMock" name="useMock" type="checkbox" />
-          <span>
-            <strong>Mock mode</strong>
-            <small>Skip the network and invent replies from page context.</small>
-          </span>
         </label>
 
         <div class="actions">

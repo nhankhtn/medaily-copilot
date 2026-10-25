@@ -501,7 +501,7 @@
       empty.innerHTML = `
         <strong>Page-aware assistant</strong>
         Ask what this page is about, summarize a section, or clarify selected text.
-        Replies use medaily-ai (or a local mock until you configure an API key).
+        Replies come from medaily-ai. Set your SERVICE_TOKEN in the extension popup.
       `;
       els.messages.appendChild(empty);
     }
@@ -513,7 +513,7 @@
       if (msg.source) {
         const meta = document.createElement("span");
         meta.className = "meta";
-        meta.textContent = msg.source === "mock" ? "Mock reply" : "medaily-ai";
+        meta.textContent = "medaily-ai";
         bubble.appendChild(meta);
       }
       els.messages.appendChild(bubble);

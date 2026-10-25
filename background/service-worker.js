@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS } from "../shared/defaults.js";
+import { API_BASE_URL, DEFAULT_SETTINGS } from "../shared/defaults.js";
 import { askMedaily } from "./medaily-client.js";
 
 chrome.runtime.onInstalled.addListener(async () => {
@@ -11,10 +11,9 @@ chrome.runtime.onInstalled.addListener(async () => {
   if (!existing.userId) {
     patch.userId = crypto.randomUUID();
   }
-  // Migrate old local-stub default to the live AI host.
-  if (existing.apiBaseUrl === "http://127.0.0.1:8787") {
-    patch.apiBaseUrl = DEFAULT_SETTINGS.apiBaseUrl;
-  }
+  // Always pin live host; retire mock / local-stub settings.
+  patch.apiBaseUrl = API_BASE_URL;
+  patch.useMock = false;
   if (Object.keys(patch).length) {
     await chrome.storage.sync.set(patch);
   }
@@ -26,7 +25,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "MEDAILY_GET_SETTINGS") {
     chrome.storage.sync
       .get(DEFAULT_SETTINGS)
-      .then((settings) => sendResponse({ ok: true, settings }))
+      .then((settings) =>
+        sendResponse({
+          ok: true,
+          settings: {
+            ...settings,
+            apiBaseUrl: API_BASE_URL,
+            useMock: false,
+          },
+        })
+      )
       .catch((err) =>
         sendResponse({ ok: false, error: err?.message || String(err) })
       );
@@ -53,5 +61,9 @@ async function handleChat(payload) {
     throw new Error("Invalid chat payload");
   }
   const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
-  return askMedaily(payload, settings);
+  return askMedaily(payload, {
+    ...settings,
+    apiBaseUrl: API_BASE_URL,
+    useMock: false,
+  });
 }

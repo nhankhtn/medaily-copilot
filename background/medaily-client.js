@@ -1,24 +1,25 @@
-import { DEFAULT_SETTINGS } from "../shared/defaults.js";
+import { API_BASE_URL, DEFAULT_SETTINGS } from "../shared/defaults.js";
 
 const CHAT_PATH = "/api/chat";
 const REQUEST_TIMEOUT_MS = 90_000;
 const THREAD_STORAGE_KEY = "medailyThreadId";
 
 /**
- * Call medaily-ai chat endpoint, or return a local mock reply.
+ * Call medaily-ai chat endpoint (live only).
  *
  * @param {object} payload
  * @param {Array<{role: string, content: string}>} payload.messages
  * @param {{url: string, title: string, selection?: string, pageText?: string}} payload.context
  * @param {typeof DEFAULT_SETTINGS} settings
- * @returns {Promise<{reply: string, source: "api" | "mock", threadId?: string}>}
+ * @returns {Promise<{reply: string, source: "api", threadId?: string}>}
  */
 export async function askMedaily(payload, settings) {
   const cfg = { ...DEFAULT_SETTINGS, ...settings };
-  const shouldMock = cfg.useMock || !cfg.apiKey || !cfg.apiBaseUrl;
-
-  if (shouldMock) {
-    return { reply: buildMockReply(payload), source: "mock" };
+  const apiKey = String(cfg.apiKey || "").trim();
+  if (!apiKey) {
+    throw new Error(
+      "API key missing — open Medaily Copilot settings and paste your SERVICE_TOKEN."
+    );
   }
 
   const userId = await ensureUserId(cfg);
@@ -27,7 +28,7 @@ export async function askMedaily(payload, settings) {
     throw new Error("Nothing to send — empty question");
   }
 
-  const base = String(cfg.apiBaseUrl).replace(/\/+$/, "");
+  const base = API_BASE_URL.replace(/\/+$/, "");
   const url = `${base}${CHAT_PATH}`;
   const threadId = await readStoredThreadId();
   const body = {
@@ -45,7 +46,7 @@ export async function askMedaily(payload, settings) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${cfg.apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify(body),
       signal: controller.signal,
@@ -109,7 +110,6 @@ function pickReplyText(data) {
 
 /**
  * medaily-ai takes a single `message` string — fold page context into it.
- * The product FE does not send page context; the extension does for page Q&A.
  */
 function buildApiMessage(payload, maxPageTextChars) {
   const lastUser = [...(payload.messages || [])]
@@ -185,54 +185,4 @@ function guessTimezone() {
   } catch {
     return "Asia/Ho_Chi_Minh";
   }
-}
-
-function buildMockReply(payload) {
-  const lastUser = [...(payload.messages || [])]
-    .reverse()
-    .find((m) => m.role === "user");
-  const question = (lastUser?.content || "").trim();
-  const title = payload.context?.title || "this page";
-  const host = safeHost(payload.context?.url);
-  const selection = (payload.context?.selection || "").trim();
-  const pageSnippet = (payload.context?.pageText || "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 180);
-
-  const lines = [
-    `Mock Medaily reply (no live API call).`,
-    ``,
-    `You asked about “${title}”${host ? ` on ${host}` : ""}.`,
-  ];
-
-  if (question) {
-    lines.push(`Question: ${truncate(question, 240)}`);
-  }
-  if (selection) {
-    lines.push(`Selected text: “${truncate(selection, 160)}”`);
-  } else if (pageSnippet) {
-    lines.push(
-      `Page excerpt: “${pageSnippet}${pageSnippet.length >= 180 ? "…" : ""}”`
-    );
-  }
-
-  lines.push(
-    ``,
-    `Turn off Mock mode, set the API key (SERVICE_TOKEN), and keep the base URL at https://ai.medaily.id.vn to call the live service.`
-  );
-
-  return lines.join("\n");
-}
-
-function safeHost(url) {
-  try {
-    return url ? new URL(url).hostname : "";
-  } catch {
-    return "";
-  }
-}
-
-function truncate(s, n) {
-  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
 }

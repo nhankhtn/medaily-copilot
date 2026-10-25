@@ -4,11 +4,7 @@ const form = document.getElementById("settings-form");
 const statusEl = document.getElementById("status");
 const showLauncherBtn = document.getElementById("show-launcher");
 const launcherStatusEl = document.getElementById("launcher-status");
-const fields = {
-  apiBaseUrl: document.getElementById("apiBaseUrl"),
-  apiKey: document.getElementById("apiKey"),
-  useMock: document.getElementById("useMock"),
-};
+const apiKeyField = document.getElementById("apiKey");
 
 function setStatus(text, kind = "") {
   statusEl.textContent = text;
@@ -26,9 +22,7 @@ function renderLauncherState(hidden) {
 
 async function loadSettings() {
   const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
-  fields.apiBaseUrl.value = settings.apiBaseUrl ?? DEFAULT_SETTINGS.apiBaseUrl;
-  fields.apiKey.value = settings.apiKey ?? "";
-  fields.useMock.checked = Boolean(settings.useMock);
+  apiKeyField.value = settings.apiKey ?? "";
   renderLauncherState(settings.launcherHidden);
 }
 
@@ -36,32 +30,17 @@ form.addEventListener("submit", async (e) => {
   e.preventDefault();
   setStatus("Saving…");
 
-  const apiBaseUrl = fields.apiBaseUrl.value.trim().replace(/\/+$/, "");
-  const apiKey = fields.apiKey.value.trim();
-  const useMock = fields.useMock.checked;
-
-  if (!useMock && apiBaseUrl) {
-    try {
-      const parsed = new URL(apiBaseUrl);
-      if (!parsed.protocol.startsWith("http")) {
-        throw new Error("not http");
-      }
-    } catch {
-      setStatus("API base URL is invalid.", "err");
-      return;
-    }
-  }
-
-  if (!useMock && !apiKey) {
-    setStatus("API key (SERVICE_TOKEN) required when Mock mode is off.", "err");
+  const apiKey = apiKeyField.value.trim();
+  if (!apiKey) {
+    setStatus("API key (SERVICE_TOKEN) is required.", "err");
     return;
   }
 
   try {
     await chrome.storage.sync.set({
-      apiBaseUrl: apiBaseUrl || DEFAULT_SETTINGS.apiBaseUrl,
       apiKey,
-      useMock,
+      apiBaseUrl: DEFAULT_SETTINGS.apiBaseUrl,
+      useMock: false,
     });
     setStatus("Saved.", "ok");
   } catch (err) {
