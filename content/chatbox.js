@@ -162,7 +162,8 @@
       right: 20px;
       bottom: 20px;
       width: min(380px, calc(100vw - 32px));
-      height: min(560px, calc(100vh - 40px));
+      height: auto;
+      max-height: min(560px, calc(100vh - 40px));
       z-index: 1;
       display: flex;
       flex-direction: column;
@@ -205,38 +206,56 @@
 
     .header {
       display: flex;
-      align-items: flex-start;
+      align-items: center;
       justify-content: space-between;
-      gap: 12px;
-      padding: 16px 16px 12px;
+      gap: 10px;
+      padding: 12px 12px 10px;
       border-bottom: 1px solid var(--line);
       cursor: grab;
       user-select: none;
       touch-action: none;
+      flex-shrink: 0;
     }
-    .header.dragging { cursor: grabbing; }
+    .header.dragging,
+    .header.dragging * { cursor: grabbing !important; }
+    .drag-handle {
+      flex-shrink: 0;
+      width: 18px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      opacity: 0.85;
+      pointer-events: none;
+      letter-spacing: -1px;
+      font-size: 14px;
+      line-height: 1;
+      font-weight: 700;
+    }
+    .header:hover .drag-handle { color: var(--accent); opacity: 1; }
     .brand {
       display: flex;
       flex-direction: column;
       gap: 2px;
       min-width: 0;
+      flex: 1;
       pointer-events: none;
     }
     .brand-name {
       font-family: "Syne", "Figtree", sans-serif;
       font-weight: 800;
-      font-size: 18px;
+      font-size: 17px;
       letter-spacing: -0.02em;
       line-height: 1.1;
     }
     .brand-name span { color: var(--accent); }
     .brand-sub {
-      font-size: 12px;
+      font-size: 11.5px;
       color: var(--muted);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      max-width: 220px;
+      max-width: 200px;
     }
     .header-actions {
       display: flex;
@@ -244,7 +263,9 @@
       gap: 4px;
       flex-shrink: 0;
       cursor: default;
+      pointer-events: auto;
     }
+    .header-actions button { cursor: pointer; }
     .icon-btn {
       width: 32px;
       height: 32px;
@@ -283,37 +304,32 @@
     }
     .text-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+    .chat-body {
+      flex: 0 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .chat-body[data-empty="true"] {
+      display: none;
+    }
     .messages {
-      flex: 1;
+      flex: 0 1 auto;
+      max-height: min(320px, calc(100vh - 220px));
       overflow-y: auto;
-      padding: 14px 14px 8px;
+      padding: 10px 14px 6px;
       display: flex;
       flex-direction: column;
       gap: 10px;
       scroll-behavior: smooth;
       user-select: text;
       cursor: auto;
+      min-height: 0;
     }
     .messages::-webkit-scrollbar { width: 8px; }
     .messages::-webkit-scrollbar-thumb {
       background: rgba(154, 175, 189, 0.35);
       border-radius: 8px;
-    }
-
-    .empty {
-      margin: auto 8px;
-      text-align: center;
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.45;
-      padding: 12px;
-    }
-    .empty strong {
-      display: block;
-      color: var(--text);
-      font-family: "Syne", sans-serif;
-      font-size: 15px;
-      margin-bottom: 6px;
     }
 
     .bubble {
@@ -451,12 +467,14 @@
     }
 
     .history-view {
-      flex: 1;
+      flex: 0 1 auto;
+      max-height: min(360px, calc(100vh - 160px));
       overflow-y: auto;
       padding: 10px 12px 12px;
       display: none;
       flex-direction: column;
       gap: 8px;
+      min-height: 0;
     }
     .history-view[data-open="true"] { display: flex; }
     .history-item {
@@ -498,11 +516,12 @@
     }
 
     .error, .hint, .status {
-      margin: 0 14px 8px;
-      padding: 8px 10px;
+      margin: 0 12px 6px;
+      padding: 6px 9px;
       border-radius: 10px;
-      font-size: 12.5px;
-      line-height: 1.4;
+      font-size: 11.5px;
+      line-height: 1.35;
+      flex-shrink: 0;
     }
     .error {
       background: rgba(255, 107, 107, 0.12);
@@ -686,7 +705,8 @@
     @media (max-width: 480px) {
       .dock { right: 12px; bottom: 12px; }
       .panel:not(.placed) { right: 12px; bottom: 12px; }
-      .panel { width: calc(100vw - 24px); height: min(70vh, 560px); }
+      .panel { width: calc(100vw - 24px); max-height: min(70vh, 560px); }
+      .messages { max-height: min(240px, calc(100vh - 200px)); }
     }
   `;
   shadow.appendChild(style);
@@ -729,7 +749,8 @@
   panel.setAttribute("role", "dialog");
   panel.setAttribute("aria-label", "Medaily Copilot chat");
   panel.innerHTML = `
-    <header class="header" data-el="header" title="Kéo để di chuyển">
+    <header class="header" data-el="header" title="Kéo thanh tiêu đề để di chuyển panel">
+      <span class="drag-handle" aria-hidden="true" title="Kéo">⋮⋮</span>
       <div class="brand">
         <div class="brand-name">Medaily <span>Copilot</span></div>
         <div class="brand-sub" data-el="subtitle">Ask about this page</div>
@@ -750,7 +771,7 @@
         </button>
       </div>
     </header>
-    <div class="chat-body" data-el="chat-body">
+    <div class="chat-body" data-el="chat-body" data-empty="true">
       <div class="messages" data-el="messages" aria-live="polite"></div>
     </div>
     <div class="history-view" data-el="history-view" data-open="false"></div>
@@ -956,7 +977,10 @@
 
     els.header.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
-      if (e.target.closest("button")) return;
+      // History / hide / close — never start a drag from buttons.
+      if (e.target.closest(".header-actions") || e.target.closest("button")) {
+        return;
+      }
       if (!open) return;
 
       const rect = panel.getBoundingClientRect();
@@ -968,7 +992,11 @@
       dragging = true;
       panel.classList.add("dragging");
       els.header.classList.add("dragging");
-      els.header.setPointerCapture?.(e.pointerId);
+      try {
+        els.header.setPointerCapture(e.pointerId);
+      } catch {
+        // older engines
+      }
       e.preventDefault();
     });
 
@@ -1303,30 +1331,19 @@
 
   function render() {
     const inHistory = viewMode === "history";
+    const hasChatContent = messages.length > 0 || loading;
     els.chatBody.setAttribute("data-hidden", inHistory ? "true" : "false");
+    els.chatBody.setAttribute("data-empty", hasChatContent ? "false" : "true");
     els.actions.setAttribute("data-hidden", inHistory ? "true" : "false");
     els.form.setAttribute("data-hidden", inHistory ? "true" : "false");
     els.historyView.setAttribute("data-open", inHistory ? "true" : "false");
     els.history.classList.toggle("active", inHistory);
+    panel.setAttribute("data-compact", !inHistory && !hasChatContent ? "true" : "false");
 
     if (inHistory) {
       renderHistoryView();
     } else {
       els.messages.innerHTML = "";
-
-      if (!messages.length && !loading) {
-        const empty = document.createElement("div");
-        empty.className = "empty";
-        const strong = document.createElement("strong");
-        strong.textContent = "Ask about this page";
-        empty.appendChild(strong);
-        empty.appendChild(
-          document.createTextNode(
-            "Tóm tắt · Gợi ý · Chèn/Gửi trên từng lựa chọn · History · kéo header để di chuyển."
-          )
-        );
-        els.messages.appendChild(empty);
-      }
 
       for (const msg of messages) {
         if (
