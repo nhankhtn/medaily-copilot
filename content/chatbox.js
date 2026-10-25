@@ -42,6 +42,8 @@
 
   const SUMMARIZE_PROMPT =
     "Tóm tắt nội dung đang mở trên trang (thread chat / email / đoạn trang). Ngắn gọn, rõ ý chính.";
+  const SUMMARIZE_THREAD_PROMPT =
+    "Tóm tắt hội thoại sau (block Thread trong [Current page]). Ngắn gọn: các ý chính, ai đang hỏi/đáp gì, và việc cần follow-up nếu có. Không bịa tin nhắn không có trong Thread.";
   const SUGGEST_PROMPT =
     "Gợi ý 1–3 câu trả lời sẵn để gửi qua nút Chèn/Gửi của extension. Đánh số 1. 2. 3. Chỉ viết nội dung trả lời — không bảo copy/paste.";
 
@@ -2038,7 +2040,7 @@
       return;
     }
 
-    // Prefer atomic insert+send so we never report Gửi success on insert-only.
+    // Atomic: insert once (replace) then send — never insertDraft + insertAndSend.
     let result;
     if (typeof kit.insertAndSend === "function") {
       result = kit.insertAndSend(text);
@@ -2049,9 +2051,11 @@
         render();
         return;
       }
-      result = kit.clickSend(inserted.element);
-      if (result && result.ok) result.inserted = true;
-      else if (result) result.inserted = true;
+      result = kit.clickSend(inserted.element || kit.findComposer());
+      if (result) {
+        result.inserted = true;
+        result.skippedInsert = Boolean(inserted.skipped);
+      }
     }
 
     if (!result?.ok) {
@@ -2082,7 +2086,23 @@
     const caps = siteCaps();
     if (action === "summarize") {
       if (!caps.summarize) return;
-      sendMessage(SUMMARIZE_PROMPT, { captureDraft: false });
+      const ctx = collectContext();
+      const isThreadSite =
+        ctx.kind === "facebook" ||
+        ctx.kind === "messenger" ||
+        ctx.kind === "gmail";
+      const thread = String(ctx.thread || "").trim();
+      if (isThreadSite && thread.length < 20) {
+        errorText =
+          ctx.kind === "gmail"
+            ? "Không đọc được nội dung email đang mở — mở thư rồi thử Tóm tắt lại."
+            : "Không đọc được hội thoại trên Facebook/Messenger — mở khung chat, cuộn tin nhắn rồi thử lại.";
+        hintText = "";
+        render();
+        return;
+      }
+      const prompt = isThreadSite ? SUMMARIZE_THREAD_PROMPT : SUMMARIZE_PROMPT;
+      sendMessage(prompt, { captureDraft: false });
       return;
     }
     if (action === "suggest") {
