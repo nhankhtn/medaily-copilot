@@ -12,6 +12,8 @@ export const DEFAULT_SETTINGS = {
   maxPageTextChars: 4000,
   /** When true, the floating launcher FAB is hidden on every page. */
   launcherHidden: false,
+  /** Panel composer mode: "chat" | "agent". */
+  panelMode: "chat",
 };
 
 /**

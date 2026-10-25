@@ -703,77 +703,125 @@
     }
 
     .composer {
-      padding: 8px 12px 12px;
+      padding: 10px 12px 10px;
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 0;
       background: rgba(10, 14, 18, 0.35);
       border-top: 1px solid var(--line);
       flex-shrink: 0;
     }
-    .composer-mode {
-      display: inline-flex;
-      align-self: flex-start;
-      gap: 0;
-      padding: 2px;
-      border-radius: 10px;
-      background: rgba(0, 0, 0, 0.28);
+    .composer-shell {
       border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #0e151c;
+      overflow: hidden;
+      transition: border-color 140ms ease, box-shadow 140ms ease;
     }
-    .mode-btn {
-      border: 0;
-      border-radius: 8px;
-      background: transparent;
-      color: var(--muted);
-      font: inherit;
-      font-size: 11.5px;
-      font-weight: 700;
-      padding: 5px 12px;
-      cursor: pointer;
-      line-height: 1.2;
-    }
-    .mode-btn:hover { color: var(--text); }
-    .mode-btn.active {
-      color: #062a28;
-      background: var(--accent);
-    }
-    .composer-row {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 8px;
-      align-items: end;
+    .composer-shell:focus-within {
+      border-color: rgba(46, 196, 182, 0.55);
+      box-shadow: 0 0 0 3px rgba(46, 196, 182, 0.12);
     }
     textarea {
       width: 100%;
       min-height: 44px;
       max-height: 120px;
       resize: none;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      background: #0e151c;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
       color: var(--text);
-      padding: 10px 12px;
+      padding: 10px 12px 6px;
       font: inherit;
       font-size: 13.5px;
       line-height: 1.4;
       user-select: text;
     }
     textarea::placeholder { color: #6f8493; }
-    textarea:focus {
-      outline: none;
-      border-color: rgba(46, 196, 182, 0.55);
-      box-shadow: 0 0 0 3px rgba(46, 196, 182, 0.15);
+    textarea:focus { outline: none; box-shadow: none; }
+    .composer-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 2px 6px 6px 8px;
+    }
+    .mode-wrap {
+      position: relative;
+      flex-shrink: 0;
+    }
+    .mode-trigger {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: #8aa0ae;
+      font: inherit;
+      font-size: 11.5px;
+      font-weight: 600;
+      padding: 3px 7px 3px 8px;
+      cursor: pointer;
+      line-height: 1.2;
+      letter-spacing: 0.01em;
+    }
+    .mode-trigger:hover {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.05);
+    }
+    .mode-trigger[aria-expanded="true"] {
+      color: var(--text);
+      background: rgba(46, 196, 182, 0.12);
+    }
+    .mode-chevron {
+      font-size: 9px;
+      opacity: 0.75;
+      transform: translateY(0.5px);
+    }
+    .mode-menu {
+      position: absolute;
+      left: 0;
+      bottom: calc(100% + 4px);
+      min-width: 108px;
+      padding: 4px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: #1a2733;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+      display: none;
+      z-index: 5;
+    }
+    .mode-menu[data-open="true"] { display: block; }
+    .mode-option {
+      display: block;
+      width: 100%;
+      text-align: left;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 7px 10px;
+      cursor: pointer;
+    }
+    .mode-option:hover { background: rgba(255, 255, 255, 0.06); color: var(--text); }
+    .mode-option[aria-selected="true"] {
+      color: var(--accent);
+      background: rgba(46, 196, 182, 0.1);
     }
     .send {
-      height: 44px;
-      min-width: 44px;
-      padding: 0 14px;
+      height: 30px;
+      min-width: 52px;
+      padding: 0 12px;
       border: 0;
-      border-radius: 12px;
+      border-radius: 999px;
       background: var(--accent);
       color: #062a28;
       font-weight: 700;
-      font-size: 13px;
+      font-size: 12px;
       cursor: pointer;
       transition: filter 140ms ease, transform 140ms ease;
     }
@@ -922,13 +970,20 @@
       <button type="button" class="action-btn danger" data-action="send-page" data-cap="send" hidden>Gửi</button>
     </div>
     <form class="composer" data-el="form">
-      <div class="composer-mode" data-el="mode-bar" role="group" aria-label="Chat or Agent mode">
-        <button type="button" class="mode-btn active" data-mode="chat">Chat</button>
-        <button type="button" class="mode-btn" data-mode="agent">Agent</button>
-      </div>
-      <div class="composer-row">
+      <div class="composer-shell">
         <textarea data-el="input" rows="2" placeholder="Ask about this page…" maxlength="4000"></textarea>
-        <button class="send" type="submit" data-el="send">Ask</button>
+        <div class="composer-footer">
+          <div class="mode-wrap" data-el="mode-wrap">
+            <button type="button" class="mode-trigger" data-el="mode-trigger" aria-haspopup="listbox" aria-expanded="false" title="Switch Chat / Agent">
+              <span data-el="mode-label">Chat</span><span class="mode-chevron" aria-hidden="true">▾</span>
+            </button>
+            <div class="mode-menu" data-el="mode-menu" data-open="false" role="listbox" aria-label="Mode">
+              <button type="button" class="mode-option" role="option" data-mode="chat" aria-selected="true">Chat</button>
+              <button type="button" class="mode-option" role="option" data-mode="agent" aria-selected="false">Agent</button>
+            </div>
+          </div>
+          <button class="send" type="submit" data-el="send">Ask</button>
+        </div>
       </div>
     </form>
   `;
@@ -942,7 +997,10 @@
     history: panel.querySelector('[data-el="history"]'),
     close: panel.querySelector('[data-el="close"]'),
     hide: panel.querySelector('[data-el="hide"]'),
-    modeBar: panel.querySelector('[data-el="mode-bar"]'),
+    modeWrap: panel.querySelector('[data-el="mode-wrap"]'),
+    modeTrigger: panel.querySelector('[data-el="mode-trigger"]'),
+    modeLabel: panel.querySelector('[data-el="mode-label"]'),
+    modeMenu: panel.querySelector('[data-el="mode-menu"]'),
     chatBody: panel.querySelector('[data-el="chat-body"]'),
     messages: panel.querySelector('[data-el="messages"]'),
     agentBody: panel.querySelector('[data-el="agent-body"]'),
@@ -974,8 +1032,10 @@
     parent.appendChild(host);
     updateSubtitle();
     syncLauncherVisibility();
+    syncModeUi();
     render();
     loadLauncherPreference();
+    loadPanelMode();
     loadPanelPosition();
     loadHistoryList();
     loadApiThreadId();
@@ -1513,19 +1573,50 @@
     }
   }
 
-  function setPanelMode(mode) {
-    panelMode = mode === "agent" ? "agent" : "chat";
-    if (viewMode === "history") viewMode = "chat";
-    els.modeBar.querySelectorAll("[data-mode]").forEach((btn) => {
-      btn.classList.toggle("active", btn.getAttribute("data-mode") === panelMode);
+  function syncModeUi() {
+    const label = panelMode === "agent" ? "Agent" : "Chat";
+    if (els.modeLabel) els.modeLabel.textContent = label;
+    els.modeMenu?.querySelectorAll("[data-mode]").forEach((btn) => {
+      btn.setAttribute(
+        "aria-selected",
+        btn.getAttribute("data-mode") === panelMode ? "true" : "false"
+      );
     });
     els.input.placeholder =
       panelMode === "agent"
         ? "Mục tiêu agent… (vd: click the Login button)"
         : "Ask about this page…";
     els.send.textContent = panelMode === "agent" ? "Run" : "Ask";
+    els.modeTrigger?.setAttribute("title", `Mode: ${label}`);
+  }
+
+  function setModeMenuOpen(open) {
+    if (!els.modeMenu || !els.modeTrigger) return;
+    els.modeMenu.setAttribute("data-open", open ? "true" : "false");
+    els.modeTrigger.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
+  function setPanelMode(mode, opts = {}) {
+    panelMode = mode === "agent" ? "agent" : "chat";
+    if (viewMode === "history") viewMode = "chat";
+    syncModeUi();
+    setModeMenuOpen(false);
+    if (opts.persist !== false) {
+      chrome.storage.sync.set({ panelMode }).catch(() => {});
+    }
     updateSubtitle();
     render();
+  }
+
+  async function loadPanelMode() {
+    try {
+      const stored = await chrome.storage.sync.get({ panelMode: "chat" });
+      const next = stored.panelMode === "agent" ? "agent" : "chat";
+      if (next !== panelMode) setPanelMode(next, { persist: false });
+      else syncModeUi();
+    } catch {
+      syncModeUi();
+    }
   }
 
   function render() {
@@ -2085,10 +2176,23 @@
     sendMessage(els.input.value);
   });
 
-  els.modeBar.addEventListener("click", (e) => {
+  els.modeTrigger?.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const open = els.modeMenu?.getAttribute("data-open") === "true";
+    setModeMenuOpen(!open);
+  });
+
+  els.modeMenu?.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-mode]");
     if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
     setPanelMode(btn.getAttribute("data-mode"));
+  });
+
+  panel.addEventListener("click", (e) => {
+    if (!els.modeWrap?.contains(e.target)) setModeMenuOpen(false);
   });
 
   function resolveAgentConfirm(decision) {
@@ -2183,6 +2287,10 @@
       launcherHidden = Boolean(changes.launcherHidden.newValue);
       if (!launcherHidden) host.hidden = false;
       syncLauncherVisibility();
+    }
+    if (area === "sync" && changes.panelMode) {
+      const next = changes.panelMode.newValue === "agent" ? "agent" : "chat";
+      if (next !== panelMode) setPanelMode(next, { persist: false });
     }
     if (area === "sync" && changes.apiKey) {
       refreshKeyHint();
