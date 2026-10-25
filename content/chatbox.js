@@ -100,15 +100,15 @@
     }
     .launcher svg { width: 18px; height: 18px; }
 
-    /* × lives OUTSIDE the bubble (left), hidden until hover — never covers open. */
+    /* × badge on the bubble’s top-right corner — small so most of the FAB opens. */
     .hide-fab {
       position: absolute;
-      top: 50%;
-      right: auto;
-      left: -22px;
-      width: 18px;
-      height: 18px;
-      margin-top: -9px;
+      top: -5px;
+      right: -5px;
+      left: auto;
+      width: 15px;
+      height: 15px;
+      margin-top: 0;
       border: 0;
       border-radius: 999px;
       padding: 0;
@@ -117,10 +117,10 @@
       cursor: pointer;
       color: var(--muted);
       background: linear-gradient(145deg, #243441 0%, #152028 100%);
-      box-shadow: 0 4px 12px rgba(8, 14, 20, 0.4), inset 0 0 0 1px rgba(46, 196, 182, 0.28);
+      box-shadow: 0 3px 8px rgba(8, 14, 20, 0.45), inset 0 0 0 1px rgba(46, 196, 182, 0.3);
       opacity: 0;
       pointer-events: none;
-      z-index: 2;
+      z-index: 3;
       transition: opacity 140ms ease, color 140ms ease, transform 140ms ease;
     }
     .dock:hover .hide-fab,
@@ -130,12 +130,12 @@
       pointer-events: auto;
       color: var(--text);
     }
-    .hide-fab:hover { transform: scale(1.08); color: #ffb4b4; }
+    .hide-fab:hover { transform: scale(1.1); color: #ffb4b4; }
     .hide-fab:focus-visible {
       outline: 2px solid var(--accent);
-      outline-offset: 2px;
+      outline-offset: 1px;
     }
-    .hide-fab svg { width: 9px; height: 9px; display: block; }
+    .hide-fab svg { width: 8px; height: 8px; display: block; }
 
     .panel {
       position: fixed;
