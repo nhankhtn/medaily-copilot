@@ -46,7 +46,12 @@
       pointer-events: none;
     }
 
-    .dock, .panel, .composer, .composer *, button, textarea, .icon-btn, .hide-fab {
+    /* Only the dock/FAB receives clicks while the panel is closed. Do NOT give
+       closed-panel descendants pointer-events:auto — they sat on top of the FAB
+       and ate every click after the shrink. */
+    .dock,
+    .dock .launcher,
+    .dock .hide-fab {
       pointer-events: auto;
     }
 
@@ -54,8 +59,9 @@
       position: fixed;
       right: 20px;
       bottom: 20px;
-      width: 36px;
-      height: 36px;
+      width: 40px;
+      height: 40px;
+      z-index: 2;
       transition: opacity 180ms ease, transform 180ms ease;
     }
     .dock[data-hidden="true"] {
@@ -68,13 +74,17 @@
       opacity: 0;
       pointer-events: none;
       transform: scale(0.9);
+      /* Keep in layout for a11y but never intercept while the panel is open. */
+      visibility: hidden;
     }
 
     .launcher {
-      width: 36px;
-      height: 36px;
+      position: relative;
+      z-index: 1;
+      width: 40px;
+      height: 40px;
       border: 0;
-      border-radius: 12px;
+      border-radius: 13px;
       background: linear-gradient(145deg, #1c3140 0%, #0f1a22 55%, #16353a 100%);
       color: var(--text);
       box-shadow: var(--shadow), inset 0 0 0 1px rgba(46, 196, 182, 0.35);
@@ -88,14 +98,17 @@
       outline: 2px solid var(--accent);
       outline-offset: 2px;
     }
-    .launcher svg { width: 16px; height: 16px; }
+    .launcher svg { width: 18px; height: 18px; }
 
+    /* × lives OUTSIDE the bubble (left), hidden until hover — never covers open. */
     .hide-fab {
       position: absolute;
-      top: -7px;
-      right: -7px;
-      width: 20px;
-      height: 20px;
+      top: 50%;
+      right: auto;
+      left: -22px;
+      width: 18px;
+      height: 18px;
+      margin-top: -9px;
       border: 0;
       border-radius: 999px;
       padding: 0;
@@ -105,12 +118,16 @@
       color: var(--muted);
       background: linear-gradient(145deg, #243441 0%, #152028 100%);
       box-shadow: 0 4px 12px rgba(8, 14, 20, 0.4), inset 0 0 0 1px rgba(46, 196, 182, 0.28);
-      opacity: 0.85;
+      opacity: 0;
+      pointer-events: none;
+      z-index: 2;
       transition: opacity 140ms ease, color 140ms ease, transform 140ms ease;
     }
     .dock:hover .hide-fab,
+    .dock:focus-within .hide-fab,
     .hide-fab:focus-visible {
       opacity: 1;
+      pointer-events: auto;
       color: var(--text);
     }
     .hide-fab:hover { transform: scale(1.08); color: #ffb4b4; }
@@ -126,6 +143,7 @@
       bottom: 20px;
       width: min(380px, calc(100vw - 32px));
       height: min(560px, calc(100vh - 40px));
+      z-index: 1;
       display: flex;
       flex-direction: column;
       background:
@@ -137,13 +155,20 @@
       box-shadow: var(--shadow);
       overflow: hidden;
       opacity: 0;
+      visibility: hidden;
       transform: translateY(12px) scale(0.98);
       pointer-events: none;
-      transition: opacity 200ms ease, transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+      transition: opacity 200ms ease, transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0s linear 200ms;
     }
     .panel.open {
       opacity: 1;
+      visibility: visible;
       transform: translateY(0) scale(1);
+      pointer-events: auto;
+      transition: opacity 200ms ease, transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0s;
+    }
+    .panel.open,
+    .panel.open * {
       pointer-events: auto;
     }
 
@@ -694,13 +719,21 @@
     }
   }
 
-  launcher.addEventListener("click", () => {
+  launcher.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     if (launcherHidden) return;
     setOpen(true);
   });
+  // Hide must not bubble to the launcher / dock open path.
   hideFab.addEventListener("click", (e) => {
+    e.preventDefault();
     e.stopPropagation();
     setLauncherHidden(true);
+  });
+  hideFab.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
   });
   els.close.addEventListener("click", () => setOpen(false));
   els.hide.addEventListener("click", () => setLauncherHidden(true));
