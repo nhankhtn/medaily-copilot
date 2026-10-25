@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Medaily Copilot",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "Floating page assistant that answers questions about the current page via medaily-ai.",
   "permissions": ["storage", "activeTab"],
   "host_permissions": ["<all_urls>", "https://ai.medaily.id.vn/*"],
@@ -22,7 +22,11 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content/page-kit.js", "content/chatbox.js"],
+      "js": [
+        "content/site-registry.js",
+        "content/page-kit.js",
+        "content/chatbox.js"
+      ],
       "css": ["content/chatbox.css"],
       "run_at": "document_idle"
     }

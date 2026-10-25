@@ -577,6 +577,10 @@
       border-color: rgba(255, 107, 107, 0.4);
       color: #ffc9c9;
     }
+    .action-btn[hidden],
+    .draft-card-actions button[hidden] {
+      display: none !important;
+    }
 
     .confirm {
       margin: 0 12px 8px;
@@ -786,10 +790,10 @@
       </div>
     </div>
     <div class="actions" data-el="actions">
-      <button type="button" class="action-btn" data-action="summarize">Tóm tắt</button>
-      <button type="button" class="action-btn" data-action="suggest">Gợi ý trả lời</button>
-      <button type="button" class="action-btn" data-action="insert">Chèn</button>
-      <button type="button" class="action-btn danger" data-action="send-page">Gửi</button>
+      <button type="button" class="action-btn" data-action="summarize" data-cap="summarize">Tóm tắt</button>
+      <button type="button" class="action-btn" data-action="suggest" data-cap="suggestReply">Gợi ý trả lời</button>
+      <button type="button" class="action-btn" data-action="insert" data-cap="insert" hidden>Chèn</button>
+      <button type="button" class="action-btn danger" data-action="send-page" data-cap="send" hidden>Gửi</button>
     </div>
     <form class="composer" data-el="form">
       <textarea data-el="input" rows="2" placeholder="Ask about this page…" maxlength="4000"></textarea>
@@ -833,6 +837,28 @@
     loadPanelPosition();
     loadHistoryList();
     loadApiThreadId();
+  }
+
+  function siteCaps() {
+    const reg = globalThis.MedailySiteRegistry;
+    if (reg?.getCapabilities) return reg.getCapabilities();
+    return {
+      summarize: true,
+      suggestReply: true,
+      insert: false,
+      send: false,
+      host: location.hostname || "",
+      siteId: "generic",
+    };
+  }
+
+  function syncCapabilityUi() {
+    const caps = siteCaps();
+    els.actions.querySelectorAll("[data-cap]").forEach((btn) => {
+      const key = btn.getAttribute("data-cap");
+      const allowed = Boolean(caps[key]);
+      btn.hidden = !allowed;
+    });
   }
 
   function updateSubtitle() {
@@ -1211,6 +1237,7 @@
   function renderDraftCards(msg) {
     const wrap = document.createElement("div");
     wrap.className = "draft-wrap";
+    const caps = siteCaps();
 
     const drafts =
       (Array.isArray(msg.drafts) && msg.drafts.length
@@ -1232,10 +1259,17 @@
 
     const intro = document.createElement("div");
     intro.className = "draft-intro";
-    intro.textContent =
-      drafts.length > 1
-        ? "Chọn Chèn hoặc Gửi dưới mỗi lựa chọn (Gửi cần xác nhận)."
-        : "Chọn Chèn hoặc Gửi bên dưới (Gửi cần xác nhận).";
+    if (caps.insert || caps.send) {
+      intro.textContent =
+        drafts.length > 1
+          ? "Chọn Chèn hoặc Gửi dưới mỗi lựa chọn (Gửi cần xác nhận)."
+          : "Chọn Chèn hoặc Gửi bên dưới (Gửi cần xác nhận).";
+    } else {
+      intro.textContent =
+        drafts.length > 1
+          ? "Gợi ý trả lời (Chèn/Gửi chỉ có trên Facebook)."
+          : "Gợi ý trả lời.";
+    }
     wrap.appendChild(intro);
 
     drafts.forEach((draft, idx) => {
@@ -1244,30 +1278,38 @@
       const text = document.createElement("div");
       text.className = "draft-card-text";
       text.textContent = draft;
-      const row = document.createElement("div");
-      row.className = "draft-card-actions";
-
-      const insertBtn = document.createElement("button");
-      insertBtn.type = "button";
-      insertBtn.textContent = "Chèn";
-      insertBtn.addEventListener("click", () => {
-        lastDraft = draft;
-        insertDraft(draft);
-      });
-
-      const sendBtn = document.createElement("button");
-      sendBtn.type = "button";
-      sendBtn.className = "send-draft";
-      sendBtn.textContent = "Gửi";
-      sendBtn.addEventListener("click", () => {
-        lastDraft = draft;
-        requestSendConfirm(draft);
-      });
-
-      row.appendChild(insertBtn);
-      row.appendChild(sendBtn);
       card.appendChild(text);
-      card.appendChild(row);
+
+      if (caps.insert || caps.send) {
+        const row = document.createElement("div");
+        row.className = "draft-card-actions";
+
+        if (caps.insert) {
+          const insertBtn = document.createElement("button");
+          insertBtn.type = "button";
+          insertBtn.textContent = "Chèn";
+          insertBtn.addEventListener("click", () => {
+            lastDraft = draft;
+            insertDraft(draft);
+          });
+          row.appendChild(insertBtn);
+        }
+
+        if (caps.send) {
+          const sendBtn = document.createElement("button");
+          sendBtn.type = "button";
+          sendBtn.className = "send-draft";
+          sendBtn.textContent = "Gửi";
+          sendBtn.addEventListener("click", () => {
+            lastDraft = draft;
+            requestSendConfirm(draft);
+          });
+          row.appendChild(sendBtn);
+        }
+
+        card.appendChild(row);
+      }
+
       wrap.appendChild(card);
 
       if (idx === 0 && !lastDraft) lastDraft = draft;
@@ -1332,6 +1374,7 @@
   function render() {
     const inHistory = viewMode === "history";
     const hasChatContent = messages.length > 0 || loading;
+    syncCapabilityUi();
     els.chatBody.setAttribute("data-hidden", inHistory ? "true" : "false");
     els.chatBody.setAttribute("data-empty", hasChatContent ? "false" : "true");
     els.actions.setAttribute("data-hidden", inHistory ? "true" : "false");
@@ -1423,22 +1466,34 @@
   }
 
   function buildPageStatus() {
+    const caps = siteCaps();
     const kit = globalThis.MedailyPageKit;
-    if (!kit) return "";
-    const ctx = kit.extractPageContext();
-    const composer = kit.findComposer();
-    const parts = [`Trang: ${ctx.label || ctx.kind}`];
-    if (ctx.thread) parts.push("đã đọc thread/email");
-    else if (ctx.pageText) parts.push("đã đọc nội dung trang");
-    if (!composer) {
-      parts.push("Chèn/Gửi: chưa thấy ô soạn thảo");
-    } else if (kit.findSendControl(composer)) {
-      parts.push("có thể Chèn + Gửi (có xác nhận)");
-    } else if (typeof kit.isFacebookHost === "function" && kit.isFacebookHost()) {
-      parts.push("Gửi: sẽ dùng Enter trên ô chat nếu không thấy nút");
-    } else {
-      parts.push("Gửi: chưa thấy nút Send gần ô soạn");
+    const ctx = kit?.extractPageContext?.() || collectContext();
+    const parts = [];
+
+    if (caps.siteId === "facebook" || caps.siteId === "messenger") {
+      parts.push(caps.siteId === "messenger" ? "Messenger" : "Facebook");
+    } else if (ctx.label && ctx.kind && ctx.kind !== "generic") {
+      parts.push(String(ctx.label));
+    } else if (caps.host) {
+      parts.push(caps.host);
     }
+
+    if (ctx.thread) parts.push("đã đọc thread");
+    else if (ctx.pageText) parts.push("đã đọc trang");
+
+    // Chèn/Gửi status only on sites that expose those caps (Facebook family).
+    if (caps.insert || caps.send) {
+      const composer = kit?.findComposer?.();
+      if (!composer) {
+        parts.push("chưa thấy ô soạn FB");
+      } else if (kit.findSendControl?.(composer)) {
+        parts.push("có thể Chèn + Gửi");
+      } else {
+        parts.push("Gửi bằng Enter nếu không thấy nút");
+      }
+    }
+
     return parts.join(" · ");
   }
 
@@ -1587,7 +1642,9 @@
         lastDraft = pickDraftText(response.reply);
       }
       hintText = isDraftReply
-        ? "Dùng Chèn / Gửi trên từng lựa chọn — không cần copy."
+        ? siteCaps().insert || siteCaps().send
+          ? "Dùng Chèn / Gửi trên từng lựa chọn — không cần copy."
+          : "Gợi ý sẵn — Chèn/Gửi chỉ có trên Facebook."
         : "";
       await persistCurrentSession();
     } catch (err) {
@@ -1624,6 +1681,11 @@
   }
 
   function insertDraft(overrideText) {
+    if (!siteCaps().insert) {
+      errorText = "Chèn chỉ dùng trên Facebook / Messenger.";
+      render();
+      return false;
+    }
     const kit = globalThis.MedailyPageKit;
     if (!kit) {
       errorText = "Page kit chưa sẵn sàng — reload extension.";
@@ -1651,6 +1713,12 @@
   }
 
   function requestSendConfirm(overrideText) {
+    if (!siteCaps().send) {
+      errorText = "Gửi chỉ dùng trên Facebook / Messenger.";
+      pendingSendConfirm = false;
+      render();
+      return;
+    }
     const kit = globalThis.MedailyPageKit;
     if (!kit) {
       errorText = "Page kit chưa sẵn sàng — reload extension.";
@@ -1660,7 +1728,7 @@
     const composer = kit.findComposer();
     if (!composer) {
       errorText =
-        "Trang này chưa hỗ trợ Chèn/Gửi — không tìm thấy ô soạn thảo (contenteditable/textarea).";
+        "Không tìm thấy ô soạn thảo Facebook — mở khung chat rồi thử lại.";
       pendingSendConfirm = false;
       render();
       return;
@@ -1690,6 +1758,11 @@
 
   function confirmAndSend() {
     pendingSendConfirm = false;
+    if (!siteCaps().send) {
+      errorText = "Gửi chỉ dùng trên Facebook / Messenger.";
+      render();
+      return;
+    }
     const kit = globalThis.MedailyPageKit;
     if (!kit) {
       errorText = "Page kit chưa sẵn sàng.";
@@ -1745,19 +1818,24 @@
 
   function onActionClick(action) {
     if (loading) return;
+    const caps = siteCaps();
     if (action === "summarize") {
+      if (!caps.summarize) return;
       sendMessage(SUMMARIZE_PROMPT, { captureDraft: false });
       return;
     }
     if (action === "suggest") {
+      if (!caps.suggestReply) return;
       sendMessage(SUGGEST_PROMPT, { forceSuggest: true, captureDraft: true });
       return;
     }
     if (action === "insert") {
+      if (!caps.insert) return;
       insertDraft();
       return;
     }
     if (action === "send-page") {
+      if (!caps.send) return;
       requestSendConfirm();
     }
   }
