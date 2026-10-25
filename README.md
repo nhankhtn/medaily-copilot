@@ -71,7 +71,9 @@ icons/                         # Extension icons
 Panel buttons (Vietnamese labels): **Tóm tắt**, **Gợi ý trả lời**, **Chèn**, **Gửi**.
 
 - Extractors: generic (any site), Facebook/Messenger thread, Gmail open email
-- **Chèn** / **Gửi** need a detectable page composer; **Gửi** always asks for confirm in the panel first
+- “nhắn giúp / gửi giúp” → suggest flow; each draft is a card with **Chèn** / **Gửi** (confirm before send)
+- **History** in the header — local `chrome.storage.local` threads; click to reopen
+- Drag the panel **header** to reposition (saved locally); FAB stays bottom-right
 
 ## Manual test checklist
 
@@ -79,7 +81,8 @@ Panel buttons (Vietnamese labels): **Tóm tắt**, **Gợi ý trả lời**, **C
 2. Open chat without an API key → clear error asking for SERVICE_TOKEN
 3. Paste SERVICE_TOKEN in the popup → Save → ask about the page → live reply (or clear HTTP error)
 4. Hide the FAB with × → popup **Show chat launcher again** restores it
-5. On FB/Messenger/Gmail: **Tóm tắt** / **Gợi ý trả lời** use thread/email context; **Chèn** + confirmed **Gửi** when composer/send are found
+5. On FB/Messenger/Gmail: type “nhắn giúp tôi đi” → draft cards → **Chèn** / confirmed **Gửi**
+6. **History** → reopen a past chat; drag header → reopen panel still at that spot
 
 ## Notes
 
