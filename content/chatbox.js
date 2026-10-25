@@ -1624,8 +1624,8 @@
     const inAgent = !inHistory && panelMode === "agent";
     const hasChatContent = messages.length > 0 || loading;
     syncCapabilityUi();
-    // Mode control lives in the composer — hide whole composer in History.
-    if (els.modeBar) els.modeBar.hidden = false;
+    syncModeUi();
+    setModeMenuOpen(false);
     els.chatBody.setAttribute(
       "data-hidden",
       inHistory || inAgent ? "true" : "false"
