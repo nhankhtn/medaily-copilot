@@ -1,0 +1,11 @@
+/* Host-page hint only — real styles live in the shadow root. */
+#medaily-copilot-root {
+  all: initial;
+  position: fixed !important;
+  z-index: 2147483646 !important;
+  inset: auto 20px 20px auto !important;
+  width: 0 !important;
+  height: 0 !important;
+  overflow: visible !important;
+  pointer-events: none !important;
+}

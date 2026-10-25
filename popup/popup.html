@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Medaily Copilot</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Syne:wght@700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <p class="eyebrow">Settings</p>
+        <h1>Medaily <span>Copilot</span></h1>
+        <p class="lede">Point the extension at your medaily-ai service, or keep Mock mode on for local demos.</p>
+      </header>
+
+      <form id="settings-form" novalidate>
+        <label class="field">
+          <span>API base URL</span>
+          <input
+            id="apiBaseUrl"
+            name="apiBaseUrl"
+            type="url"
+            placeholder="http://127.0.0.1:8787"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </label>
+
+        <label class="field">
+          <span>API key</span>
+          <input
+            id="apiKey"
+            name="apiKey"
+            type="password"
+            placeholder="Bearer token (optional in mock mode)"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </label>
+
+        <label class="toggle">
+          <input id="useMock" name="useMock" type="checkbox" />
+          <span>
+            <strong>Mock mode</strong>
+            <small>Skip the network and invent replies from page context.</small>
+          </span>
+        </label>
+
+        <div class="actions">
+          <button type="submit" id="save">Save</button>
+          <p id="status" class="status" role="status" aria-live="polite"></p>
+        </div>
+      </form>
+
+      <p class="hint">
+        Live calls hit <code>POST {base}/v1/chat</code>. See the README for the request/response contract.
+      </p>
+    </main>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
