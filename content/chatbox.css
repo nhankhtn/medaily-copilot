@@ -7,5 +7,6 @@
   width: 0 !important;
   height: 0 !important;
   overflow: visible !important;
+  /* Clicks go to shadow children (FAB / panel); host itself must not capture. */
   pointer-events: none !important;
 }

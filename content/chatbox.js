@@ -325,7 +325,11 @@
       transition: filter 140ms ease, transform 140ms ease;
     }
     .send:hover:not(:disabled) { filter: brightness(1.05); transform: translateY(-1px); }
-    .send:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    .send:disabled {
+      opacity: 0.85;
+      cursor: progress;
+      transform: none;
+    }
     .send:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
 
     .typing {
@@ -470,9 +474,7 @@
       refreshKeyHint();
       render();
       queueMicrotask(() => {
-        // Never leave the field locked when the panel opens.
-        els.input.disabled = false;
-        els.input.removeAttribute("readonly");
+        unlockComposer();
         els.input.focus();
       });
     }
@@ -529,9 +531,9 @@
       const empty = document.createElement("div");
       empty.className = "empty";
       empty.innerHTML = `
-        <strong>Page-aware assistant</strong>
-        Ask what this page is about, summarize a section, or clarify selected text.
-        Replies come from medaily-ai. Set your SERVICE_TOKEN in the extension popup.
+        <strong>Medaily Copilot</strong>
+        Type here in this panel (opened from the teal FAB). The page’s own “Suy luận” bar is separate and is not this extension.
+        Replies come from medaily-ai once a SERVICE_TOKEN is saved in the toolbar popup.
       `;
       els.messages.appendChild(empty);
     }
@@ -573,12 +575,20 @@
       els.error.textContent = "";
     }
 
-    // Input stays usable even while a request is in flight or when no API key
-    // is configured — errors show in-panel instead of greying out the composer.
-    els.input.disabled = false;
-    els.input.removeAttribute("readonly");
-    els.send.disabled = loading || !els.input.value.trim();
+    // Never grey out the textarea. Ask is only blocked while a request is in
+    // flight — missing keys / empty text show in-panel errors on send instead.
+    unlockComposer();
+    els.send.disabled = loading;
+    els.send.setAttribute("aria-busy", loading ? "true" : "false");
     els.messages.scrollTop = els.messages.scrollHeight;
+  }
+
+  function unlockComposer() {
+    els.input.disabled = false;
+    els.input.readOnly = false;
+    els.input.removeAttribute("readonly");
+    els.input.removeAttribute("aria-disabled");
+    els.input.setAttribute("aria-disabled", "false");
   }
 
   function collectContext() {
@@ -606,7 +616,13 @@
 
   async function sendMessage(text) {
     const content = text.trim();
-    if (!content || loading) return;
+    if (loading) return;
+    if (!content) {
+      errorText = "Type a question in this panel, then press Ask.";
+      render();
+      els.input.focus();
+      return;
+    }
 
     errorText = "";
     messages.push({ role: "user", content });
@@ -616,6 +632,14 @@
 
     let guardTimer;
     try {
+      // Re-read key at send time so a popup Save is picked up without reload.
+      const stored = await chrome.storage.sync.get({ apiKey: "" });
+      if (!String(stored.apiKey || "").trim()) {
+        throw new Error(
+          "API key missing — save your SERVICE_TOKEN in the Medaily Copilot toolbar popup, then Ask again."
+        );
+      }
+
       const response = await Promise.race([
         chrome.runtime.sendMessage({
           type: "MEDAILY_CHAT",
@@ -664,8 +688,7 @@
     } finally {
       clearTimeout(guardTimer);
       loading = false;
-      els.input.disabled = false;
-      els.input.removeAttribute("readonly");
+      unlockComposer();
       render();
       els.input.focus();
     }
@@ -683,7 +706,8 @@
   els.hide.addEventListener("click", () => setLauncherHidden(true));
 
   els.input.addEventListener("input", () => {
-    els.send.disabled = loading || !els.input.value.trim();
+    unlockComposer();
+    els.send.disabled = loading;
     els.input.style.height = "auto";
     els.input.style.height = `${Math.min(els.input.scrollHeight, 120)}px`;
   });
@@ -706,10 +730,18 @@
   });
 
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== "sync" || !changes.launcherHidden) return;
-    launcherHidden = Boolean(changes.launcherHidden.newValue);
-    if (!launcherHidden) host.hidden = false;
-    syncLauncherVisibility();
+    if (area !== "sync") return;
+    if (changes.launcherHidden) {
+      launcherHidden = Boolean(changes.launcherHidden.newValue);
+      if (!launcherHidden) host.hidden = false;
+      syncLauncherVisibility();
+    }
+    if (changes.apiKey) {
+      // Popup Save → clear/refresh hint immediately without waiting for reopen.
+      refreshKeyHint();
+      unlockComposer();
+      if (open) render();
+    }
   });
 
   if (document.readyState === "loading") {
