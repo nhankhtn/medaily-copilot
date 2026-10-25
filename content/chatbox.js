@@ -555,11 +555,7 @@
     if (!messages.length && !loading) {
       const empty = document.createElement("div");
       empty.className = "empty";
-      empty.innerHTML = `
-        <strong>Medaily Copilot</strong>
-        Type here in this panel (opened from the teal FAB). The page’s own “Suy luận” bar is separate and is not this extension.
-        Replies come from medaily-ai once a SERVICE_TOKEN is saved in the toolbar popup.
-      `;
+      empty.textContent = "Ask about this page…";
       els.messages.appendChild(empty);
     }
 
