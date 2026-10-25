@@ -7,6 +7,14 @@ chrome.runtime.onInstalled.addListener(async () => {
   for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
     if (existing[key] === undefined) patch[key] = value;
   }
+  // Stable agent userId (required by POST /api/chat). Generated once.
+  if (!existing.userId) {
+    patch.userId = crypto.randomUUID();
+  }
+  // Migrate old local-stub default to the live AI host.
+  if (existing.apiBaseUrl === "http://127.0.0.1:8787") {
+    patch.apiBaseUrl = DEFAULT_SETTINGS.apiBaseUrl;
+  }
   if (Object.keys(patch).length) {
     await chrome.storage.sync.set(patch);
   }

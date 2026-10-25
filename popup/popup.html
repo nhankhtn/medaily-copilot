@@ -27,7 +27,7 @@
             id="apiBaseUrl"
             name="apiBaseUrl"
             type="url"
-            placeholder="http://127.0.0.1:8787"
+            placeholder="https://ai.medaily.id.vn"
             autocomplete="off"
             spellcheck="false"
           />
@@ -39,7 +39,7 @@
             id="apiKey"
             name="apiKey"
             type="password"
-            placeholder="Bearer token (optional in mock mode)"
+            placeholder="SERVICE_TOKEN (optional in mock mode)"
             autocomplete="off"
             spellcheck="false"
           />
@@ -59,9 +59,15 @@
         </div>
       </form>
 
-      <p class="hint">
-        Live calls hit <code>POST {base}/v1/chat</code>. See the README for the request/response contract.
-      </p>
+      <section class="launcher-card" aria-label="Chat launcher">
+        <div class="launcher-copy">
+          <strong>Chat launcher</strong>
+          <small id="launcher-status">Visible on pages</small>
+        </div>
+        <button type="button" id="show-launcher" class="secondary">
+          Show chat launcher again
+        </button>
+      </section>
     </main>
     <script type="module" src="popup.js"></script>
   </body>

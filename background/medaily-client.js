@@ -1,5 +1,9 @@
 import { DEFAULT_SETTINGS } from "../shared/defaults.js";
 
+const CHAT_PATH = "/api/chat";
+const REQUEST_TIMEOUT_MS = 90_000;
+const THREAD_STORAGE_KEY = "medailyThreadId";
+
 /**
  * Call medaily-ai chat endpoint, or return a local mock reply.
  *
@@ -7,7 +11,7 @@ import { DEFAULT_SETTINGS } from "../shared/defaults.js";
  * @param {Array<{role: string, content: string}>} payload.messages
  * @param {{url: string, title: string, selection?: string, pageText?: string}} payload.context
  * @param {typeof DEFAULT_SETTINGS} settings
- * @returns {Promise<{reply: string, source: "api" | "mock"}>}
+ * @returns {Promise<{reply: string, source: "api" | "mock", threadId?: string}>}
  */
 export async function askMedaily(payload, settings) {
   const cfg = { ...DEFAULT_SETTINGS, ...settings };
@@ -17,10 +21,24 @@ export async function askMedaily(payload, settings) {
     return { reply: buildMockReply(payload), source: "mock" };
   }
 
+  const userId = await ensureUserId(cfg);
+  const message = buildApiMessage(payload, cfg.maxPageTextChars);
+  if (!message) {
+    throw new Error("Nothing to send — empty question");
+  }
+
   const base = String(cfg.apiBaseUrl).replace(/\/+$/, "");
-  const url = `${base}/v1/chat`;
+  const url = `${base}${CHAT_PATH}`;
+  const threadId = await readStoredThreadId();
+  const body = {
+    message: message.slice(0, 2000),
+    userId,
+    timezone: guessTimezone(),
+  };
+  if (threadId) body.threadId = threadId;
+
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
     const res = await fetch(url, {
@@ -29,10 +47,7 @@ export async function askMedaily(payload, settings) {
         "Content-Type": "application/json",
         Authorization: `Bearer ${cfg.apiKey}`,
       },
-      body: JSON.stringify({
-        messages: payload.messages,
-        context: payload.context,
-      }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
 
@@ -44,19 +59,131 @@ export async function askMedaily(payload, settings) {
     }
 
     const data = await res.json();
-    const reply =
-      (typeof data?.reply === "string" && data.reply) ||
-      (typeof data?.message?.content === "string" && data.message.content) ||
-      (typeof data?.choices?.[0]?.message?.content === "string" &&
-        data.choices[0].message.content);
-
-    if (!reply) {
-      throw new Error("medaily-ai response missing reply text");
+    if (typeof data?.threadId === "string" && data.threadId) {
+      await storeThreadId(data.threadId);
     }
 
-    return { reply, source: "api" };
+    const reply = pickReplyText(data);
+    if (!reply) {
+      throw new Error("medaily-ai response missing answer text");
+    }
+
+    return {
+      reply,
+      source: "api",
+      threadId: typeof data?.threadId === "string" ? data.threadId : undefined,
+    };
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+/** Reset the persisted agent thread (e.g. after clearing the chat UI). */
+export async function clearMedailyThread() {
+  await chrome.storage.session.remove(THREAD_STORAGE_KEY).catch(async () => {
+    await chrome.storage.local.remove(THREAD_STORAGE_KEY);
+  });
+}
+
+function pickReplyText(data) {
+  if (typeof data?.answer === "string" && data.answer.trim()) {
+    return data.answer;
+  }
+
+  // Filing turns stop without an answer — surface the router's reason instead.
+  const filing = data?.decision?.filing;
+  if (filing && filing !== "none") {
+    const reason =
+      typeof data?.decision?.reason === "string" ? data.decision.reason.trim() : "";
+    return reason
+      ? `Looks like a note to file under “${filing}”. ${reason}`
+      : `Looks like a note to file under “${filing}” (no answer text from the agent).`;
+  }
+
+  if (typeof data?.decision?.reason === "string" && data.decision.reason.trim()) {
+    return data.decision.reason;
+  }
+
+  return null;
+}
+
+/**
+ * medaily-ai takes a single `message` string — fold page context into it.
+ * The product FE does not send page context; the extension does for page Q&A.
+ */
+function buildApiMessage(payload, maxPageTextChars) {
+  const lastUser = [...(payload.messages || [])]
+    .reverse()
+    .find((m) => m.role === "user");
+  const question = (lastUser?.content || "").trim();
+  if (!question) return "";
+
+  const ctx = payload.context || {};
+  const parts = [question];
+  const meta = [];
+
+  if (ctx.title) meta.push(`Title: ${String(ctx.title).slice(0, 200)}`);
+  if (ctx.url) meta.push(`URL: ${String(ctx.url).slice(0, 300)}`);
+  const selection = (ctx.selection || "").trim();
+  if (selection) meta.push(`Selected text: ${selection.slice(0, 400)}`);
+  const pageText = (ctx.pageText || "").replace(/\s+/g, " ").trim();
+  const budget = Math.max(200, Number(maxPageTextChars) || 4000);
+  if (pageText && !selection) {
+    meta.push(`Page excerpt: ${pageText.slice(0, Math.min(800, budget))}`);
+  }
+
+  if (meta.length) {
+    parts.push("", "[Page context]", ...meta);
+  }
+
+  return parts.join("\n").trim();
+}
+
+async function ensureUserId(cfg) {
+  if (isUuid(cfg.userId)) return cfg.userId;
+
+  const generated = crypto.randomUUID();
+  await chrome.storage.sync.set({ userId: generated });
+  return generated;
+}
+
+function isUuid(value) {
+  return (
+    typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      value
+    )
+  );
+}
+
+async function readStoredThreadId() {
+  try {
+    const session = await chrome.storage.session.get(THREAD_STORAGE_KEY);
+    if (typeof session[THREAD_STORAGE_KEY] === "string") {
+      return session[THREAD_STORAGE_KEY];
+    }
+  } catch {
+    // session storage may be unavailable in older Chromium — fall through
+  }
+  const local = await chrome.storage.local.get(THREAD_STORAGE_KEY);
+  return typeof local[THREAD_STORAGE_KEY] === "string"
+    ? local[THREAD_STORAGE_KEY]
+    : "";
+}
+
+async function storeThreadId(threadId) {
+  try {
+    await chrome.storage.session.set({ [THREAD_STORAGE_KEY]: threadId });
+  } catch {
+    await chrome.storage.local.set({ [THREAD_STORAGE_KEY]: threadId });
+  }
+}
+
+function guessTimezone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Ho_Chi_Minh";
+  } catch {
+    return "Asia/Ho_Chi_Minh";
   }
 }
 
@@ -85,12 +212,14 @@ function buildMockReply(payload) {
   if (selection) {
     lines.push(`Selected text: “${truncate(selection, 160)}”`);
   } else if (pageSnippet) {
-    lines.push(`Page excerpt: “${pageSnippet}${pageSnippet.length >= 180 ? "…" : ""}”`);
+    lines.push(
+      `Page excerpt: “${pageSnippet}${pageSnippet.length >= 180 ? "…" : ""}”`
+    );
   }
 
   lines.push(
     ``,
-    `Wire a real service by setting the API base URL + key in the extension popup and turning off Mock mode. See README for the /v1/chat contract.`
+    `Turn off Mock mode, set the API key (SERVICE_TOKEN), and keep the base URL at https://ai.medaily.id.vn to call the live service.`
   );
 
   return lines.join("\n");

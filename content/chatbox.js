@@ -11,6 +11,7 @@
   let open = false;
   let loading = false;
   let errorText = "";
+  let launcherHidden = false;
 
   const host = document.createElement("div");
   host.id = ROOT_ID;
@@ -42,14 +43,31 @@
       pointer-events: none;
     }
 
-    .launcher, .panel, button, textarea {
+    .dock, .panel, button, textarea {
       pointer-events: auto;
     }
 
-    .launcher {
+    .dock {
       position: fixed;
       right: 20px;
       bottom: 20px;
+      width: 56px;
+      height: 56px;
+      transition: opacity 180ms ease, transform 180ms ease;
+    }
+    .dock[data-hidden="true"] {
+      opacity: 0;
+      pointer-events: none;
+      transform: scale(0.85);
+      visibility: hidden;
+    }
+    .dock[data-expanded="true"] {
+      opacity: 0;
+      pointer-events: none;
+      transform: scale(0.9);
+    }
+
+    .launcher {
       width: 56px;
       height: 56px;
       border: 0;
@@ -68,7 +86,36 @@
       outline-offset: 3px;
     }
     .launcher svg { width: 24px; height: 24px; }
-    .launcher[aria-expanded="true"] { opacity: 0; pointer-events: none; transform: scale(0.9); }
+
+    .hide-fab {
+      position: absolute;
+      top: -6px;
+      right: -6px;
+      width: 22px;
+      height: 22px;
+      border: 0;
+      border-radius: 999px;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      color: var(--muted);
+      background: linear-gradient(145deg, #243441 0%, #152028 100%);
+      box-shadow: 0 4px 12px rgba(8, 14, 20, 0.4), inset 0 0 0 1px rgba(46, 196, 182, 0.28);
+      opacity: 0.72;
+      transition: opacity 140ms ease, color 140ms ease, transform 140ms ease;
+    }
+    .dock:hover .hide-fab,
+    .hide-fab:focus-visible {
+      opacity: 1;
+      color: var(--text);
+    }
+    .hide-fab:hover { transform: scale(1.06); color: #ffb4b4; }
+    .hide-fab:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .hide-fab svg { width: 10px; height: 10px; display: block; }
 
     .panel {
       position: fixed;
@@ -126,6 +173,12 @@
       overflow: hidden;
       text-overflow: ellipsis;
       max-width: 260px;
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
     }
     .icon-btn {
       width: 32px;
@@ -302,6 +355,11 @@
   `;
   shadow.appendChild(style);
 
+  const dock = document.createElement("div");
+  dock.className = "dock";
+  dock.setAttribute("data-hidden", "false");
+  dock.setAttribute("data-expanded", "false");
+
   const launcher = document.createElement("button");
   launcher.className = "launcher";
   launcher.type = "button";
@@ -316,6 +374,20 @@
     </svg>
   `;
 
+  const hideFab = document.createElement("button");
+  hideFab.className = "hide-fab";
+  hideFab.type = "button";
+  hideFab.setAttribute("aria-label", "Hide Medaily Copilot launcher");
+  hideFab.title = "Hide launcher";
+  hideFab.innerHTML = `
+    <svg viewBox="0 0 10 10" fill="none" aria-hidden="true">
+      <path d="M2 2l6 6M8 2l-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
+  `;
+
+  dock.appendChild(launcher);
+  dock.appendChild(hideFab);
+
   const panel = document.createElement("section");
   panel.className = "panel";
   panel.setAttribute("role", "dialog");
@@ -326,11 +398,20 @@
         <div class="brand-name">Medaily <span>Copilot</span></div>
         <div class="brand-sub" data-el="subtitle">Ask about this page</div>
       </div>
-      <button class="icon-btn" type="button" data-el="close" aria-label="Close chat">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-        </svg>
-      </button>
+      <div class="header-actions">
+        <button class="icon-btn" type="button" data-el="hide" aria-label="Hide launcher from this page" title="Hide launcher">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M2.5 8s2.2-3.5 5.5-3.5S13.5 8 13.5 8s-2.2 3.5-5.5 3.5S2.5 8 2.5 8Z" stroke="currentColor" stroke-width="1.4"/>
+            <circle cx="8" cy="8" r="1.6" fill="currentColor"/>
+            <path d="M3 13L13 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <button class="icon-btn" type="button" data-el="close" aria-label="Minimize chat">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
     </header>
     <div class="messages" data-el="messages" aria-live="polite"></div>
     <div class="error" data-el="error" hidden></div>
@@ -340,12 +421,13 @@
     </form>
   `;
 
-  shadow.appendChild(launcher);
+  shadow.appendChild(dock);
   shadow.appendChild(panel);
 
   const els = {
     subtitle: panel.querySelector('[data-el="subtitle"]'),
     close: panel.querySelector('[data-el="close"]'),
+    hide: panel.querySelector('[data-el="hide"]'),
     messages: panel.querySelector('[data-el="messages"]'),
     error: panel.querySelector('[data-el="error"]'),
     form: panel.querySelector('[data-el="form"]'),
@@ -358,7 +440,9 @@
     const parent = document.documentElement || document.body;
     parent.appendChild(host);
     updateSubtitle();
+    syncLauncherVisibility();
     render();
+    loadLauncherPreference();
   }
 
   function updateSubtitle() {
@@ -371,9 +455,40 @@
     open = next;
     panel.classList.toggle("open", open);
     launcher.setAttribute("aria-expanded", String(open));
+    dock.setAttribute("data-expanded", String(open));
     if (open) {
       render();
       queueMicrotask(() => els.input.focus());
+    }
+  }
+
+  function syncLauncherVisibility() {
+    dock.setAttribute("data-hidden", String(launcherHidden));
+    if (launcherHidden) {
+      if (open) setOpen(false);
+      host.hidden = true;
+    } else {
+      host.hidden = false;
+    }
+  }
+
+  async function setLauncherHidden(hidden) {
+    launcherHidden = Boolean(hidden);
+    syncLauncherVisibility();
+    try {
+      await chrome.storage.sync.set({ launcherHidden });
+    } catch {
+      // Ignore storage failures — visibility still updates for this page.
+    }
+  }
+
+  async function loadLauncherPreference() {
+    try {
+      const stored = await chrome.storage.sync.get({ launcherHidden: false });
+      launcherHidden = Boolean(stored.launcherHidden);
+      syncLauncherVisibility();
+    } catch {
+      // Keep default visible.
     }
   }
 
@@ -485,8 +600,16 @@
     }
   }
 
-  launcher.addEventListener("click", () => setOpen(true));
+  launcher.addEventListener("click", () => {
+    if (launcherHidden) return;
+    setOpen(true);
+  });
+  hideFab.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setLauncherHidden(true);
+  });
   els.close.addEventListener("click", () => setOpen(false));
+  els.hide.addEventListener("click", () => setLauncherHidden(true));
 
   els.input.addEventListener("input", () => {
     els.send.disabled = loading || !els.input.value.trim();
@@ -509,6 +632,13 @@
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && open) setOpen(false);
+  });
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "sync" || !changes.launcherHidden) return;
+    launcherHidden = Boolean(changes.launcherHidden.newValue);
+    if (!launcherHidden) host.hidden = false;
+    syncLauncherVisibility();
   });
 
   if (document.readyState === "loading") {

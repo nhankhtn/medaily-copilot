@@ -1,27 +1,31 @@
 /** Shared defaults for Medaily Copilot settings. */
 
 export const DEFAULT_SETTINGS = {
-  apiBaseUrl: "http://127.0.0.1:8787",
+  apiBaseUrl: "https://ai.medaily.id.vn",
   apiKey: "",
+  userId: "",
   useMock: true,
   maxPageTextChars: 4000,
+  /** When true, the floating launcher FAB is hidden on every page. */
+  launcherHidden: false,
 };
 
 /**
- * Expected medaily-ai request shape (POST {apiBaseUrl}/v1/chat):
+ * Real medaily-ai contract (POST {apiBaseUrl}/api/chat):
  *
+ * Request:
  * {
- *   messages: [{ role: "user" | "assistant" | "system", content: string }],
- *   context: {
- *     url: string,
- *     title: string,
- *     selection?: string,
- *     pageText?: string
- *   }
+ *   message: string,          // 1–2000 chars; page context folded into this
+ *   userId: string,           // UUID — whose data the agent may read
+ *   threadId?: string,        // omit to start; send back to continue
+ *   timezone?: string         // IANA name
  * }
  *
- * Expected response:
- * { reply: string }
+ * Response:
+ * { threadId, answer, decision?, models?, turns? }
  *
- * Auth header when apiKey is set: Authorization: Bearer <apiKey>
+ * Auth: Authorization: Bearer <SERVICE_TOKEN> (extension "API key")
+ *
+ * Product FE streams the same body via POST /api/chat/live (SSE).
+ * There is no /v1/chat on this service.
  */

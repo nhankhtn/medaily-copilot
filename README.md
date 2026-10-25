@@ -1,6 +1,6 @@
 # Medaily Copilot
 
-Chromium Manifest V3 extension that injects a floating chat assistant on every page. Ask questions about the current page; the background service worker calls a **medaily-ai** HTTP API (or a built-in mock when no credentials are configured).
+Chromium Manifest V3 extension that injects a floating chat assistant on every page. Ask questions about the current page; the background service worker calls **medaily-ai** at `https://ai.medaily.id.vn` (or a built-in mock when Mock mode is on / no key is set).
 
 Built for **Ngô Nhân**.
 
@@ -18,53 +18,41 @@ Click the extension icon to open settings:
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| API base URL | `http://127.0.0.1:8787` | Origin of your medaily-ai service (no trailing slash required) |
-| API key | _(empty)_ | Sent as `Authorization: Bearer <key>` |
+| API base URL | `https://ai.medaily.id.vn` | Origin of medaily-ai (no trailing slash required) |
+| API key | _(empty)_ | `SERVICE_TOKEN` — sent as `Authorization: Bearer <key>` |
 | Mock mode | **on** | Skip the network and invent replies from page context |
+| Chat launcher | visible | Small × on the FAB (or the eye-off control in the open panel) hides the launcher; restore via **Show chat launcher again** in the popup |
 
-Mock mode stays on by default so the extension works with zero credentials. Turn it off and set a base URL + key to hit a real service.
+Mock mode stays on by default so the extension works with zero credentials. Turn it off, paste the service token, and leave the base URL at the production host to hit the real API.
 
-## medaily-ai request / response contract
+A stable `userId` UUID is created automatically on first live call and stored in `chrome.storage.sync` (required by medaily-ai). Replace it with a real Medaily user UUID if you want the agent to read that person's data.
 
-The service worker sends:
+## medaily-ai request / response
+
+Live calls:
 
 ```http
-POST {apiBaseUrl}/v1/chat
+POST {apiBaseUrl}/api/chat
 Content-Type: application/json
 Authorization: Bearer {apiKey}
 ```
 
 ```json
 {
-  "messages": [
-    { "role": "user", "content": "What is this page about?" }
-  ],
-  "context": {
-    "url": "https://example.com/docs",
-    "title": "Example Docs",
-    "selection": "optional selected text",
-    "pageText": "truncated visible page text (up to ~4000 chars)"
-  }
+  "message": "What is this page about?\n\n[Page context]\nTitle: …\nURL: …",
+  "userId": "00000000-0000-4000-8000-000000000000",
+  "threadId": "optional-from-previous-reply",
+  "timezone": "Asia/Ho_Chi_Minh"
 }
 ```
 
-Expected JSON response (any one of these shapes works):
+Response field used for the chat bubble:
 
 ```json
-{ "reply": "This page explains…" }
+{ "answer": "This page explains…", "threadId": "…" }
 ```
 
-Also accepted:
-
-```json
-{ "message": { "role": "assistant", "content": "…" } }
-```
-
-```json
-{ "choices": [{ "message": { "content": "…" } }] }
-```
-
-Wire your real medaily-ai service to that path, paste the base URL and key into the popup, disable Mock mode, and reload the extension if needed.
+The product web app streams the same body via `POST /api/chat/live` through its own BFF; the extension uses the non-streaming `/api/chat` JSON route.
 
 ## Project layout
 
@@ -85,10 +73,11 @@ icons/                         # Extension icons
 2. Open chat → empty state shows → ask “Summarize this page” → mock reply references the title/URL
 3. Select text on the page → ask about the selection → mock reply includes the selection
 4. Open the popup → turn Mock mode off without a key → Save shows a validation error
-5. Point API base URL at a local stub that implements `POST /v1/chat`, add a key, disable mock → live reply appears (or a clear HTTP error banner)
+5. Set API key to the real `SERVICE_TOKEN`, disable mock, keep base URL `https://ai.medaily.id.vn` → live reply appears (or a clear HTTP error banner)
 
 ## Notes
 
-- No account system or database — only the API key in `chrome.storage.sync`
+- No account system or database — API key + auto `userId` in `chrome.storage.sync`
 - The chat UI uses a closed Shadow DOM so host-page CSS does not restyle the panel
 - Content scripts run at `document_idle` on `<all_urls>`
+- `host_permissions` include `https://ai.medaily.id.vn/*` for the live AI host
