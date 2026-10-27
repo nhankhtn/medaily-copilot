@@ -1,10 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Medaily Copilot",
-  "version": "0.4.5",
-  "description": "Floating page assistant and browser agent via medaily-ai.",
+  "version": "0.6.0",
+  "description": "Floating page assistant and browser agent via medaily-ai, Gemini or Claude.",
   "permissions": ["storage", "activeTab", "webRequest"],
-  "host_permissions": ["<all_urls>", "https://ai.medaily.id.vn/*"],
+  "host_permissions": [
+    "<all_urls>",
+    "https://ai.medaily.id.vn/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://api.anthropic.com/*"
+  ],
   "action": {
     "default_title": "Medaily Copilot",
     "default_popup": "popup/popup.html",
@@ -24,6 +29,7 @@
       "matches": ["<all_urls>"],
       "js": [
         "content/site-registry.js",
+        "content/page-capture.js",
         "content/page-kit.js",
         "content/agent-tools.js",
         "content/agent-runtime.js",

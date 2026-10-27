@@ -17,11 +17,20 @@
       <header class="hero">
         <p class="eyebrow">Settings</p>
         <h1>Medaily <span>Copilot</span></h1>
-        <p class="lede">Paste your SERVICE_TOKEN, Save, then click the teal FAB on the page to open Copilot (not the site’s own “Suy luận” bar).</p>
+        <p class="lede">Pick a model provider and paste its key, Save, then click the teal FAB on the page to open Copilot. Gemini/Claude keys stay on this device and are sent only to Google/Anthropic.</p>
       </header>
 
       <form id="settings-form" novalidate>
         <label class="field">
+          <span>Model provider</span>
+          <select id="provider" name="provider">
+            <option value="medaily">Medaily AI (SERVICE_TOKEN)</option>
+            <option value="gemini">Gemini — direct, free tier</option>
+            <option value="anthropic">Claude — direct, paid</option>
+          </select>
+        </label>
+
+        <label class="field" data-provider="medaily">
           <span>API key</span>
           <input
             id="apiKey"
@@ -33,20 +42,83 @@
           />
         </label>
 
+        <label class="field" data-provider="gemini">
+          <span>Gemini API key <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">get one free</a></span>
+          <input
+            id="geminiApiKey"
+            type="password"
+            placeholder="AIza…"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </label>
+        <label class="field" data-provider="gemini">
+          <span>Gemini model</span>
+          <select id="geminiModelSelect">
+            <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite — fast, cheapest</option>
+            <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite</option>
+            <option value="gemini-3.6-flash">Gemini 3.6 Flash</option>
+            <option value="gemini-3.8-flash">Gemini 3.8 Flash — best Flash</option>
+            <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro (preview)</option>
+            <option value="custom">Custom model ID…</option>
+          </select>
+          <input id="geminiModel" type="text" placeholder="gemini-…" autocomplete="off" spellcheck="false" />
+        </label>
+
+        <label class="field" data-provider="anthropic">
+          <span>Claude API key</span>
+          <input
+            id="anthropicApiKey"
+            type="password"
+            placeholder="sk-ant-…"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </label>
+        <label class="field" data-provider="anthropic">
+          <span>Claude model</span>
+          <select id="anthropicModelSelect">
+            <option value="claude-haiku-5-5">Claude Haiku 5.5 — fast, cheapest</option>
+            <option value="claude-sonnet-5-5">Claude Sonnet 5.5</option>
+            <option value="claude-opus-5-5">Claude Opus 5.5 — most capable</option>
+            <option value="custom">Custom model ID…</option>
+          </select>
+          <input id="anthropicModel" type="text" placeholder="claude-…" autocomplete="off" spellcheck="false" />
+        </label>
+
+        <label class="check" data-byok>
+          <input id="agentScreenshots" type="checkbox" />
+          <span>Agent screenshot each step</span>
+        </label>
+
         <div class="actions">
           <button type="submit" id="save">Save</button>
           <p id="status" class="status" role="status" aria-live="polite"></p>
         </div>
       </form>
 
-      <section class="launcher-card" aria-label="Chat launcher">
-        <div class="launcher-copy">
-          <strong>Chat launcher</strong>
-          <small id="launcher-status">Visible on pages</small>
+      <section class="rows" aria-label="Key and launcher settings">
+        <div class="row">
+          <span class="row-label">Encryption <em id="crypto-status">Off</em></span>
+          <span class="row-actions">
+            <button type="button" id="enable-crypto" class="mini">Encrypt</button>
+            <button type="button" id="unlock" class="mini">Unlock</button>
+            <button type="button" id="lock" class="mini">Lock</button>
+            <button type="button" id="disable-crypto" class="mini">Turn off</button>
+          </span>
         </div>
-        <button type="button" id="show-launcher" class="secondary">
-          Show chat launcher again
-        </button>
+        <div class="row" id="passphrase-field" hidden>
+          <input id="passphrase" type="password" placeholder="Passphrase (8+ chars)" autocomplete="off" spellcheck="false" />
+          <button type="button" id="passphrase-ok" class="mini">OK</button>
+        </div>
+        <div class="row">
+          <span class="row-label">Saved keys</span>
+          <button type="button" id="clear-keys" class="mini danger">Delete all</button>
+        </div>
+        <div class="row">
+          <span class="row-label">Chat launcher <em id="launcher-status">Visible</em></span>
+          <button type="button" id="show-launcher" class="mini">Show</button>
+        </div>
       </section>
     </main>
     <script type="module" src="popup.js"></script>

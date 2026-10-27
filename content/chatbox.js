@@ -32,6 +32,8 @@
   let apiThreadId = "";
   /** @type {{left: number, top: number}|null} */
   let panelPos = null;
+  /** Images queued for the next Ask: {mimeType, data, dataUrl}. In-memory only. */
+  let attachments = [];
   let dragging = false;
 
   const SEND_GUARD_MS = 95_000;
@@ -44,6 +46,9 @@
     "Tóm tắt nội dung đang mở trên trang (thread chat / email / đoạn trang). Ngắn gọn, rõ ý chính.";
   const SUMMARIZE_THREAD_PROMPT =
     "Tóm tắt hội thoại sau (block Thread trong [Current page]). Ngắn gọn: các ý chính, ai đang hỏi/đáp gì, và việc cần follow-up nếu có. Không bịa tin nhắn không có trong Thread.";
+  const MAX_ATTACHMENTS = 4;
+  const DEFAULT_IMAGE_QUESTION = "Giải thích nội dung trong ảnh.";
+
   const SUGGEST_PROMPT =
     "Gợi ý 1–3 câu trả lời sẵn để gửi qua nút Chèn/Gửi của extension. Đánh số 1. 2. 3. Chỉ viết nội dung trả lời — không bảo copy/paste.";
 
@@ -81,6 +86,21 @@
     .dock .launcher,
     .dock .hide-fab {
       pointer-events: auto;
+    }
+
+    /* Page CSS wins over :host, so the type stack lives on the inner roots. */
+    .dock,
+    .panel {
+      font-family: "Figtree", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-size: 14px;
+      font-weight: 400;
+      line-height: 1.5;
+      letter-spacing: normal;
+      text-align: left;
+      color: var(--text);
+    }
+    button, input, textarea, select {
+      font-family: inherit;
     }
 
     .dock {
@@ -167,16 +187,15 @@
       position: fixed;
       right: 20px;
       bottom: 20px;
-      width: min(380px, calc(100vw - 32px));
+      width: min(400px, calc(100vw - 32px));
       height: auto;
-      max-height: min(560px, calc(100vh - 40px));
+      max-height: min(640px, calc(100vh - 40px));
       z-index: 1;
       display: flex;
       flex-direction: column;
       background:
-        radial-gradient(120% 80% at 100% 0%, rgba(46, 196, 182, 0.18), transparent 55%),
-        radial-gradient(90% 70% at 0% 100%, rgba(244, 162, 97, 0.12), transparent 50%),
-        linear-gradient(165deg, var(--panel) 0%, #121a22 100%);
+        radial-gradient(100% 40% at 100% 0%, rgba(46, 196, 182, 0.08), transparent 60%),
+        #131b23;
       border: 1px solid var(--line);
       border-radius: var(--radius);
       box-shadow: var(--shadow);
@@ -397,12 +416,12 @@
     }
     .messages {
       flex: 0 1 auto;
-      max-height: min(320px, calc(100vh - 220px));
+      max-height: min(440px, calc(100vh - 220px));
       overflow-y: auto;
-      padding: 10px 14px 6px;
+      padding: 14px 16px 8px;
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 14px;
       scroll-behavior: smooth;
       user-select: text;
       cursor: auto;
@@ -426,15 +445,23 @@
     }
     .bubble.user {
       align-self: flex-end;
-      background: linear-gradient(135deg, #245a55, #1a3f4a);
-      border: 1px solid rgba(46, 196, 182, 0.35);
+      max-width: 85%;
+      background: #1f4744;
+      border: 0;
+      border-radius: 16px 16px 4px 16px;
       color: #f2f7f6;
     }
     .bubble.assistant {
-      align-self: flex-start;
-      background: #243441;
-      border: 1px solid rgba(232, 240, 245, 0.14);
-      color: #f4f7f9;
+      align-self: stretch;
+      max-width: 100%;
+      padding: 0 2px;
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+      color: #e9eff3;
+      font-size: 14px;
+      line-height: 1.6;
+      white-space: normal;
     }
     .bubble.assistant a {
       color: var(--accent);
@@ -460,15 +487,39 @@
       padding: 1px 5px;
     }
     .bubble.assistant p,
-    .bubble.assistant li,
     .bubble.assistant ul,
-    .bubble.assistant ol {
+    .bubble.assistant ol,
+    .bubble.assistant pre {
       color: inherit;
-      margin: 0 0 0.45em;
+      margin: 0 0 0.7em;
     }
+    .bubble.assistant li {
+      margin: 0 0 0.3em;
+      padding-left: 2px;
+    }
+    .bubble.assistant li::marker { color: var(--accent); }
     .bubble.assistant ul,
     .bubble.assistant ol {
-      padding-left: 1.2em;
+      padding-left: 1.3em;
+    }
+    .bubble.assistant h4 {
+      margin: 0.9em 0 0.4em;
+      font-size: 14.5px;
+      font-weight: 700;
+      color: #ffffff;
+    }
+    .bubble.assistant h4:first-child { margin-top: 0; }
+    .bubble.assistant pre {
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.35);
+      overflow-x: auto;
+      white-space: pre;
+    }
+    .bubble.assistant pre code {
+      border: 0;
+      padding: 0;
+      background: transparent;
     }
     .bubble.assistant p:last-child,
     .bubble.assistant ul:last-child,
@@ -490,7 +541,8 @@
       color: #9eb3c0;
     }
     .bubble.assistant .meta {
-      color: #a8bcc8;
+      color: #6f8493;
+      font-size: 10.5px;
     }
 
     .draft-wrap {
@@ -619,7 +671,43 @@
       background: rgba(244, 162, 97, 0.1);
       border: 1px solid rgba(244, 162, 97, 0.3);
       color: #f0d0b0;
+      cursor: pointer;
     }
+    .status:hover { border-color: rgba(244, 162, 97, 0.6); }
+    .status::after { content: " ▾"; opacity: 0.7; }
+    .status[aria-expanded="true"]::after { content: " ▴"; }
+    .context-toggle {
+      align-self: flex-start;
+      margin: 0 12px 6px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 11.5px;
+      cursor: pointer;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .context-toggle:hover { color: var(--text); }
+    .context-view {
+      margin: 0 12px 8px;
+      padding: 8px 10px;
+      max-height: 220px;
+      overflow: auto;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: #0e151c;
+      color: #c9d6de;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+      flex-shrink: 0;
+      user-select: text;
+    }
+    .context-view[hidden] { display: none; }
 
     .actions {
       display: flex;
@@ -752,6 +840,88 @@
       position: relative;
       flex-shrink: 0;
     }
+    .composer-tools {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+    }
+    .tool-btn {
+      width: 28px;
+      height: 28px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: #8aa0ae;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      padding: 0;
+    }
+    .tool-btn svg { width: 16px; height: 16px; }
+    .tool-btn:hover:not(:disabled) { color: var(--text); background: rgba(255, 255, 255, 0.06); }
+    .tool-btn:disabled { opacity: 0.4; cursor: progress; }
+    .attach-tray {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 8px 10px 0;
+    }
+    .attach-tray[hidden] { display: none; }
+    .attach-item {
+      position: relative;
+      width: 52px;
+      height: 52px;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      background: #1a2733;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-size: 18px;
+    }
+    .attach-item img,
+    .bubble-images img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .attach-remove {
+      position: absolute;
+      top: 2px;
+      right: 2px;
+      width: 16px;
+      height: 16px;
+      border: 0;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      font-size: 11px;
+      line-height: 16px;
+      padding: 0;
+      cursor: pointer;
+    }
+    .panel.drop-target .composer-shell {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(46, 196, 182, 0.2);
+    }
+    .bubble-images {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 4px;
+      margin-bottom: 6px;
+    }
+    .bubble-images span {
+      width: 64px;
+      height: 64px;
+      border-radius: 8px;
+      overflow: hidden;
+      background: rgba(0, 0, 0, 0.25);
+      display: grid;
+      place-items: center;
+    }
     .mode-trigger {
       display: inline-flex;
       align-items: center;
@@ -822,8 +992,9 @@
       border-radius: 999px;
       background: var(--accent);
       color: #062a28;
+      font: inherit;
       font-weight: 700;
-      font-size: 12px;
+      font-size: 12.5px;
       cursor: pointer;
       transition: filter 140ms ease, transform 140ms ease;
     }
@@ -873,7 +1044,7 @@
       .dock { right: 12px; bottom: 12px; }
       .panel:not(.placed) { right: 12px; bottom: 12px; }
       .panel { width: calc(100vw - 24px); max-height: min(70vh, 560px); }
-      .messages { max-height: min(240px, calc(100vh - 200px)); }
+      .messages { max-height: min(320px, calc(100vh - 200px)); }
     }
   `;
   shadow.appendChild(style);
@@ -944,19 +1115,22 @@
     <div class="agent-body" data-el="agent-body" data-open="false">
       <div class="agent-log" data-el="agent-log" aria-live="polite"></div>
       <div class="agent-status" data-el="agent-status">Agent idle — mô tả mục tiêu rồi Run.</div>
+      <button type="button" class="context-toggle" data-el="agent-context">Xem context agent gửi ▾</button>
       <div class="agent-confirm" data-el="agent-confirm" data-open="false">
         <h4 data-el="agent-confirm-title">Confirm action</h4>
         <p data-el="agent-confirm-body"></p>
         <div class="agent-confirm-row">
           <button type="button" class="agent-stop" data-el="agent-stop">Stop</button>
           <button type="button" class="agent-skip" data-el="agent-skip">Skip</button>
+          <button type="button" class="agent-skip" data-el="agent-approve-all" title="Approve every remaining step of this run, except sending messages">Duyệt hết</button>
           <button type="button" class="agent-approve" data-el="agent-approve">Approve</button>
         </div>
       </div>
     </div>
     <div class="history-view" data-el="history-view" data-open="false"></div>
     <div class="hint" data-el="hint" hidden></div>
-    <div class="status" data-el="status" hidden></div>
+    <div class="status" data-el="status" role="button" tabindex="0" title="Xem nội dung AI đọc từ trang" hidden></div>
+    <pre class="context-view" data-el="context-view" hidden></pre>
     <div class="error" data-el="error" hidden></div>
     <div class="confirm" data-el="confirm" data-open="false" role="alertdialog" aria-label="Confirm send">
       <p data-el="confirm-text">Chèn nội dung rồi nhấn Gửi trên trang?</p>
@@ -973,8 +1147,11 @@
     </div>
     <form class="composer" data-el="form">
       <div class="composer-shell">
-        <textarea data-el="input" rows="2" placeholder="Ask about this page…" maxlength="4000"></textarea>
+        <div class="attach-tray" data-el="attach-tray" hidden></div>
+        <textarea data-el="input" rows="2" placeholder="Ask about this page… (paste or drop an image)" maxlength="4000"></textarea>
+        <input type="file" accept="image/*" multiple hidden data-el="file-input" />
         <div class="composer-footer">
+          <div class="composer-tools">
           <div class="mode-wrap" data-el="mode-wrap">
             <button type="button" class="mode-trigger" data-el="mode-trigger" aria-haspopup="listbox" aria-expanded="false" title="Switch Chat / Agent">
               <span data-el="mode-label">Chat</span><span class="mode-chevron" aria-hidden="true">▾</span>
@@ -983,6 +1160,13 @@
               <button type="button" class="mode-option" role="option" data-mode="chat" aria-selected="true">Chat</button>
               <button type="button" class="mode-option" role="option" data-mode="agent" aria-selected="false">Agent</button>
             </div>
+          </div>
+          <button type="button" class="tool-btn" data-el="attach" title="Attach image" aria-label="Attach image">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m20 11.5-7.8 7.8a5 5 0 0 1-7.1-7.1l8.1-8.1a3.3 3.3 0 0 1 4.7 4.7l-8.1 8.1a1.7 1.7 0 0 1-2.4-2.4l7.4-7.4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          </button>
+          <button type="button" class="tool-btn" data-el="screenshot" title="Screenshot this page" aria-label="Screenshot this page">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6h1.6l1.2-1.8h5.4L15.9 6h1.6A2.5 2.5 0 0 1 20 8.5v8a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5v-8Z" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12.5" r="3.2" stroke="currentColor" stroke-width="1.7"/></svg>
+          </button>
           </div>
           <button class="send" type="submit" data-el="send">Ask</button>
         </div>
@@ -1012,11 +1196,14 @@
     agentConfirmTitle: panel.querySelector('[data-el="agent-confirm-title"]'),
     agentConfirmBody: panel.querySelector('[data-el="agent-confirm-body"]'),
     agentApprove: panel.querySelector('[data-el="agent-approve"]'),
+    agentApproveAll: panel.querySelector('[data-el="agent-approve-all"]'),
     agentSkip: panel.querySelector('[data-el="agent-skip"]'),
     agentStop: panel.querySelector('[data-el="agent-stop"]'),
     historyView: panel.querySelector('[data-el="history-view"]'),
     hint: panel.querySelector('[data-el="hint"]'),
     status: panel.querySelector('[data-el="status"]'),
+    contextView: panel.querySelector('[data-el="context-view"]'),
+    agentContext: panel.querySelector('[data-el="agent-context"]'),
     error: panel.querySelector('[data-el="error"]'),
     confirm: panel.querySelector('[data-el="confirm"]'),
     confirmText: panel.querySelector('[data-el="confirm-text"]'),
@@ -1025,6 +1212,10 @@
     actions: panel.querySelector('[data-el="actions"]'),
     form: panel.querySelector('[data-el="form"]'),
     input: panel.querySelector('[data-el="input"]'),
+    attachTray: panel.querySelector('[data-el="attach-tray"]'),
+    fileInput: panel.querySelector('[data-el="file-input"]'),
+    attach: panel.querySelector('[data-el="attach"]'),
+    screenshot: panel.querySelector('[data-el="screenshot"]'),
     send: panel.querySelector('[data-el="send"]'),
   };
 
@@ -1098,13 +1289,31 @@
     }
   }
 
+  /** Key presence for the selected provider — keys stay in the service worker. */
+  async function readKeyStatus() {
+    const res = await chrome.runtime.sendMessage({ type: "MEDAILY_KEY_STATUS" });
+    if (!res?.ok) throw new Error(res?.error || "Could not read settings");
+    return {
+      provider: res.provider,
+      locked: Boolean(res.locked),
+      ready: Boolean(res.ready),
+    };
+  }
+
+  function keyLabel(provider) {
+    if (provider === "gemini") return "Gemini API key";
+    if (provider === "anthropic") return "Claude API key";
+    return "SERVICE_TOKEN";
+  }
+
   async function refreshKeyHint() {
     try {
-      const stored = await chrome.storage.sync.get({ apiKey: "" });
-      const hasKey = Boolean(String(stored.apiKey || "").trim());
-      hintText = hasKey
+      const status = await readKeyStatus();
+      hintText = status.ready
         ? ""
-        : "Add your SERVICE_TOKEN in the extension popup to get live replies.";
+        : status.locked
+          ? "Keys are locked — unlock them in the extension popup."
+          : `Add your ${keyLabel(status.provider)} in the extension popup to get live replies.`;
     } catch {
       hintText =
         "Could not read settings — open the Medaily Copilot popup and save your API key.";
@@ -1325,12 +1534,13 @@
       pageTitle: document.title || location.hostname || "",
       updatedAt: Date.now(),
       threadId: apiThreadId || undefined,
-      messages: messages.map(({ role, content, source, drafts, isDraftReply }) => ({
+      messages: messages.map(({ role, content, source, drafts, isDraftReply, draftIntent }) => ({
         role,
         content,
         source,
         drafts,
         isDraftReply,
+        draftIntent,
       })),
     };
 
@@ -1379,6 +1589,13 @@
     render();
   }
 
+  /** Requests to operate the page rather than answer about it. */
+  function isPageActionIntent(text) {
+    return /(^|\s)(fill|click|submit)(\s|$)|điền|bấm|nhấn\s|(tạo|nhập|chọn|đăng nhập|thao tác)[^.?!\n]{0,60}(giúp|hộ|dùm)/i.test(
+      String(text || "")
+    );
+  }
+
   function isSendHelpIntent(text) {
     const t = String(text || "").toLowerCase();
     return /(nhắn\s*(giúp|hộ)|gửi\s*(giúp|hộ)|trả\s*lời\s*(giúp|hộ)|soạn\s*(giúp|hộ)|help\s*me\s*(reply|send|message|text)|draft\s*(a\s*)?reply|reply\s*(for|help)\s*me)/i.test(
@@ -1404,7 +1621,7 @@
         .replace(/[ \t]+/g, " ")
         .trim();
       // Drop trailing meta lines like "Copy gửi…"
-      const cleaned = body
+      const cleaned = stripInlineMarkdown(body)
         .split("\n")
         .filter(
           (line) =>
@@ -1420,7 +1637,7 @@
     if (blocks.length >= 1) return blocks.slice(0, 5);
 
     // Single-paragraph draft (no numbering) — use whole answer minus copy instructions.
-    const stripped = raw
+    const stripped = stripInlineMarkdown(raw)
       .split("\n")
       .filter(
         (line) =>
@@ -1431,6 +1648,19 @@
       .join("\n")
       .trim();
     return stripped ? [stripped] : [];
+  }
+
+  /** Drafts are pasted into the site's composer as plain text. */
+  function stripInlineMarkdown(text) {
+    return String(text || "")
+      .replace(/\*\*([^*]+)\*\*/g, "$1")
+      .replace(/`([^`]+)`/g, "$1");
+  }
+
+  function sourceLabel(source) {
+    if (source === "gemini") return "Gemini";
+    if (source === "anthropic") return "Claude";
+    return "medaily-ai";
   }
 
   function pickDraftText(reply) {
@@ -1455,7 +1685,7 @@
       if (msg.source) {
         const meta = document.createElement("span");
         meta.className = "meta";
-        meta.textContent = "medaily-ai";
+        meta.textContent = sourceLabel(msg.source);
         bubble.appendChild(meta);
       }
       return bubble;
@@ -1601,6 +1831,9 @@
   function setPanelMode(mode, opts = {}) {
     panelMode = mode === "agent" ? "agent" : "chat";
     if (viewMode === "history") viewMode = "chat";
+    // The preview describes one mode's payload — don't leave it stale.
+    els.contextView.hidden = true;
+    els.status.setAttribute("aria-expanded", "false");
     syncModeUi();
     setModeMenuOpen(false);
     if (opts.persist !== false) {
@@ -1654,7 +1887,8 @@
       for (const msg of messages) {
         if (
           msg.role === "assistant" &&
-          (msg.isDraftReply || (msg.drafts && msg.drafts.length))
+          msg.draftIntent &&
+          msg.drafts?.length
         ) {
           els.messages.appendChild(renderDraftCards(msg));
           continue;
@@ -1662,22 +1896,15 @@
         const bubble = document.createElement("div");
         bubble.className = `bubble ${msg.role}`;
         if (msg.role === "assistant") {
-          // Also upgrade plain numbered replies into cards.
-          const drafts = parseDraftOptions(msg.content);
-          if (drafts.length >= 2) {
-            els.messages.appendChild(
-              renderDraftCards({ ...msg, drafts, isDraftReply: true })
-            );
-            continue;
-          }
           bubble.innerHTML = formatAssistantHtml(msg.content);
         } else {
-          bubble.textContent = msg.content;
+          if (msg.images?.length) bubble.appendChild(renderBubbleImages(msg.images));
+          bubble.appendChild(document.createTextNode(msg.content));
         }
         if (msg.source) {
           const meta = document.createElement("span");
           meta.className = "meta";
-          meta.textContent = "medaily-ai";
+          meta.textContent = sourceLabel(msg.source);
           bubble.appendChild(meta);
         }
         els.messages.appendChild(bubble);
@@ -1727,6 +1954,62 @@
       btn.disabled = loading || inHistory;
     });
   }
+
+  /** Exactly what the next request will carry, before provider-side truncation. */
+  function buildContextPreview() {
+    if (panelMode === "agent") {
+      const runtime = globalThis.MedailyAgentRuntime;
+      const last = runtime?.getLastSnapshot?.();
+      if (runtime?.isRunning?.() || last) {
+        return last
+          ? `[Snapshot gửi cho planner ở bước gần nhất]\n\n${last}`
+          : "Agent đang chạy — chưa có snapshot.";
+      }
+      const snap = globalThis.MedailyAgentTools?.buildSnapshot?.(50);
+      return snap
+        ? `[Snapshot sẽ gửi khi bấm Run]\n\n${snap.text}`
+        : "Agent tools chưa sẵn sàng.";
+    }
+
+    const ctx = collectContext();
+    const lines = [
+      "[Context gửi kèm câu hỏi Chat]",
+      `URL: ${ctx.url || "(unknown)"}`,
+      `Title: ${ctx.title || "(untitled)"}`,
+      `Kind: ${ctx.kind || "generic"}${ctx.label ? ` (${ctx.label})` : ""}`,
+    ];
+    if (ctx.subject) lines.push(`Subject: ${ctx.subject}`);
+    if (ctx.selection) lines.push(`Selected text: ${ctx.selection}`);
+    if (ctx.thread) {
+      lines.push(`Thread (${ctx.thread.length} ký tự):`, ctx.thread);
+    } else if (ctx.pageText && !ctx.selection) {
+      lines.push(`Page text (${ctx.pageText.length} ký tự):`, ctx.pageText);
+    } else if (!ctx.pageText) {
+      lines.push("(Không đọc được text của trang)");
+    }
+    if (attachments.length) lines.push("", `+ ${attachments.length} ảnh đính kèm`);
+    lines.push(
+      "",
+      "Lưu ý: medaily-ai cắt cả message còn 4000 ký tự; Gemini/Claude nhận tới ~16000."
+    );
+    return lines.join("\n");
+  }
+
+  function toggleContextView(trigger) {
+    const opening = els.contextView.hidden || els.contextView.dataset.trigger !== trigger.dataset.el;
+    els.contextView.hidden = !opening;
+    els.contextView.dataset.trigger = trigger.dataset.el;
+    if (opening) els.contextView.textContent = buildContextPreview();
+    els.status.setAttribute("aria-expanded", String(opening && trigger === els.status));
+  }
+
+  els.status.addEventListener("click", () => toggleContextView(els.status));
+  els.status.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    toggleContextView(els.status);
+  });
+  els.agentContext.addEventListener("click", () => toggleContextView(els.agentContext));
 
   function buildPageStatus() {
     const caps = siteCaps();
@@ -1800,7 +2083,8 @@
   }
 
   async function sendMessage(text, opts = {}) {
-    const original = text.trim();
+    const images = attachments.slice();
+    const original = text.trim() || (images.length ? DEFAULT_IMAGE_QUESTION : "");
     if (loading) return;
     if (!original) {
       errorText = "Type a question in this panel, then press Ask.";
@@ -1810,6 +2094,11 @@
     }
 
     const sendHelp = opts.forceSuggest || isSendHelpIntent(original);
+    // Chat has no page tools — hand "fill / click / tạo giúp" requests to the agent.
+    if (!sendHelp && !images.length && isPageActionIntent(original)) {
+      startAgentRun(original);
+      return;
+    }
     const apiUserText = sendHelp
       ? [
           original,
@@ -1822,7 +2111,15 @@
     errorText = "";
     pendingSendConfirm = false;
     viewMode = "chat";
-    messages.push({ role: "user", content: original });
+    messages.push({
+      role: "user",
+      content: original,
+      images: images.length ? images.map((img) => img.dataUrl) : undefined,
+    });
+    if (images.length) {
+      attachments = [];
+      renderAttachments();
+    }
     loading = true;
     if (!opts.keepInput) els.input.value = "";
     updateSubtitle();
@@ -1830,10 +2127,15 @@
 
     let guardTimer;
     try {
-      const stored = await chrome.storage.sync.get({ apiKey: "" });
-      if (!String(stored.apiKey || "").trim()) {
+      const status = await readKeyStatus();
+      if (status.locked) {
         throw new Error(
-          "API key missing — save your SERVICE_TOKEN in the Medaily Copilot toolbar popup, then Ask again."
+          "API keys are locked — unlock them in the Medaily Copilot toolbar popup, then Ask again."
+        );
+      }
+      if (!status.ready) {
+        throw new Error(
+          `API key missing — save your ${keyLabel(status.provider)} in the Medaily Copilot toolbar popup, then Ask again.`
         );
       }
 
@@ -1854,6 +2156,7 @@
           payload: {
             messages: payloadMessages,
             context: collectContext(),
+            images: images.map(({ mimeType, data }) => ({ mimeType, data })),
           },
         }),
         new Promise((_, reject) => {
@@ -1889,8 +2192,9 @@
       const drafts = captureDraft || sendHelp
         ? parseDraftOptions(response.reply)
         : [];
-      const isDraftReply =
-        Boolean(sendHelp || opts.forceSuggest) || drafts.length >= 2;
+      // Only an explicit draft request becomes cards — a normal answer with a
+      // bulleted list must stay a markdown bubble.
+      const isDraftReply = Boolean(sendHelp || opts.forceSuggest);
 
       messages.push({
         role: "assistant",
@@ -1898,6 +2202,7 @@
         source: response.source,
         drafts: isDraftReply ? drafts : undefined,
         isDraftReply: isDraftReply || undefined,
+        draftIntent: isDraftReply || undefined,
       });
       if (isDraftReply && drafts.length) {
         lastDraft = drafts[0];
@@ -2223,10 +2528,122 @@
   }
 
   els.agentApprove.addEventListener("click", () => resolveAgentConfirm("approve"));
+  els.agentApproveAll.addEventListener("click", () => resolveAgentConfirm("approve_all"));
   els.agentSkip.addEventListener("click", () => resolveAgentConfirm("skip"));
   els.agentStop.addEventListener("click", () => {
     globalThis.MedailyAgentRuntime?.stop?.();
     resolveAgentConfirm("stop");
+  });
+
+  /** Thumbnail cell; falls back to an icon when page CSP blocks data: images. */
+  function imageCell(tag, dataUrl) {
+    const cell = document.createElement(tag);
+    const img = document.createElement("img");
+    img.alt = "";
+    img.src = dataUrl;
+    img.addEventListener("error", () => {
+      img.remove();
+      cell.textContent = "🖼";
+    });
+    cell.appendChild(img);
+    return cell;
+  }
+
+  function renderBubbleImages(urls) {
+    const row = document.createElement("div");
+    row.className = "bubble-images";
+    for (const url of urls) row.appendChild(imageCell("span", url));
+    return row;
+  }
+
+  function renderAttachments() {
+    els.attachTray.replaceChildren();
+    els.attachTray.hidden = !attachments.length;
+    attachments.forEach((att, idx) => {
+      const cell = imageCell("div", att.dataUrl);
+      cell.className = "attach-item";
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "attach-remove";
+      remove.textContent = "×";
+      remove.setAttribute("aria-label", "Remove image");
+      remove.addEventListener("click", () => {
+        attachments.splice(idx, 1);
+        renderAttachments();
+      });
+      cell.appendChild(remove);
+      els.attachTray.appendChild(cell);
+    });
+  }
+
+  function addAttachment(img) {
+    if (attachments.length >= MAX_ATTACHMENTS) {
+      errorText = `Tối đa ${MAX_ATTACHMENTS} ảnh mỗi câu hỏi.`;
+      render();
+      return;
+    }
+    attachments.push(img);
+    renderAttachments();
+  }
+
+  async function addImageFiles(files) {
+    const capture = globalThis.MedailyCapture;
+    for (const file of files) {
+      if (!file?.type?.startsWith("image/")) continue;
+      try {
+        addAttachment(await capture.fromFile(file));
+      } catch (err) {
+        errorText = `Không đọc được ảnh: ${err?.message || err}`;
+        render();
+      }
+    }
+    els.input.focus();
+  }
+
+  async function attachScreenshot() {
+    els.screenshot.disabled = true;
+    try {
+      addAttachment(await globalThis.MedailyCapture.captureVisible());
+      errorText = "";
+    } catch (err) {
+      errorText = `Không chụp được trang: ${err?.message || err}`;
+      render();
+    } finally {
+      els.screenshot.disabled = false;
+      els.input.focus();
+    }
+  }
+
+  els.attach.addEventListener("click", () => els.fileInput.click());
+  els.fileInput.addEventListener("change", () => {
+    addImageFiles([...els.fileInput.files]);
+    els.fileInput.value = "";
+  });
+  els.screenshot.addEventListener("click", attachScreenshot);
+
+  els.input.addEventListener("paste", (e) => {
+    const files = [...(e.clipboardData?.files || [])].filter((f) =>
+      f.type.startsWith("image/")
+    );
+    if (!files.length) return;
+    e.preventDefault();
+    addImageFiles(files);
+  });
+
+  panel.addEventListener("dragover", (e) => {
+    if (![...(e.dataTransfer?.types || [])].includes("Files")) return;
+    e.preventDefault();
+    panel.classList.add("drop-target");
+  });
+  panel.addEventListener("dragleave", (e) => {
+    if (!panel.contains(e.relatedTarget)) panel.classList.remove("drop-target");
+  });
+  panel.addEventListener("drop", (e) => {
+    panel.classList.remove("drop-target");
+    const files = [...(e.dataTransfer?.files || [])];
+    if (!files.length) return;
+    e.preventDefault();
+    addImageFiles(files);
   });
 
   function appendAgentLog(line, kind = "system") {
@@ -2312,7 +2729,11 @@
       const next = changes.panelMode.newValue === "agent" ? "agent" : "chat";
       if (next !== panelMode) setPanelMode(next, { persist: false });
     }
-    if (area === "sync" && changes.apiKey) {
+    if (
+      (area === "sync" && (changes.apiKey || changes.provider)) ||
+      (area === "local" &&
+        (changes.geminiApiKey || changes.anthropicApiKey || changes.encryptedSecrets))
+    ) {
       refreshKeyHint();
       unlockComposer();
       if (open) render();
@@ -2338,16 +2759,81 @@
     return str.length > n ? `${str.slice(0, n - 1)}…` : str;
   }
 
+  /** Minimal safe markdown: paragraphs, headings, lists, code fences, inline marks. */
   function formatAssistantHtml(raw) {
-    let s = escapeHtml(String(raw ?? ""));
+    const lines = String(raw ?? "").replace(/\r\n?/g, "\n").split("\n");
+    const out = [];
+    let para = [];
+    let list = null;
+    let fence = null;
+
+    const flushPara = () => {
+      if (para.length) out.push(`<p>${para.map(formatInline).join("<br>")}</p>`);
+      para = [];
+    };
+    const closeList = () => {
+      if (list) out.push(`</${list}>`);
+      list = null;
+    };
+
+    for (const line of lines) {
+      if (fence) {
+        if (/^\s*```/.test(line)) {
+          out.push(`<pre><code>${escapeHtml(fence.join("\n"))}</code></pre>`);
+          fence = null;
+        } else {
+          fence.push(line);
+        }
+        continue;
+      }
+      const t = line.trim();
+      if (/^```/.test(t)) {
+        flushPara();
+        closeList();
+        fence = [];
+        continue;
+      }
+      if (!t) {
+        flushPara();
+        continue;
+      }
+      const heading = /^#{1,6}\s+(.+)$/.exec(t);
+      const bullet = /^[-*•]\s+(.+)$/.exec(t);
+      const numbered = /^(\d+)[.)]\s+(.+)$/.exec(t);
+      if (heading) {
+        flushPara();
+        closeList();
+        out.push(`<h4>${formatInline(heading[1])}</h4>`);
+      } else if (bullet || numbered) {
+        flushPara();
+        const tag = bullet ? "ul" : "ol";
+        if (list !== tag) {
+          closeList();
+          const start = numbered && numbered[1] !== "1" ? ` start="${Number(numbered[1])}"` : "";
+          out.push(`<${tag}${start}>`);
+          list = tag;
+        }
+        out.push(`<li>${formatInline(bullet ? bullet[1] : numbered[2])}</li>`);
+      } else {
+        closeList();
+        para.push(t);
+      }
+    }
+    if (fence) out.push(`<pre><code>${escapeHtml(fence.join("\n"))}</code></pre>`);
+    flushPara();
+    closeList();
+    return out.join("");
+  }
+
+  function formatInline(text) {
+    let s = escapeHtml(text);
+    s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
     s = s.replace(
       /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
       '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
     );
     s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     s = s.replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
-    s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
-    s = s.replace(/(^|\n)[-*] (.+)/g, "$1• $2");
     return s;
   }
 

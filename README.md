@@ -20,10 +20,17 @@ Click the extension icon to open settings:
 
 | Setting | Purpose |
 | --- | --- |
-| API key | `SERVICE_TOKEN` — sent as `Authorization: Bearer <key>` (required) |
+| Model provider | **Medaily AI** (via `ai.medaily.id.vn`), **Gemini** or **Claude** (called directly from the service worker, bypassing medaily-ai) |
+| API key | Medaily: `SERVICE_TOKEN` — sent as `Authorization: Bearer <key>` |
+| Gemini API key / model | Free key from [AI Studio](https://aistudio.google.com/apikey); pick a model in the dropdown (default `gemini-3.5-flash-lite`) or enter a custom ID; free tier is RPM/RPD limited |
+| Claude API key / model | Anthropic API key (paid, no free tier); dropdown Haiku / Sonnet / Opus 5.5 (default `claude-haiku-5-5`) or a custom ID |
 | Chat launcher | Small × on the FAB (or the eye-off control in the open panel) hides the launcher; restore via **Show chat launcher again** |
 
-The API host is fixed at `https://ai.medaily.id.vn` (not editable in the popup).
+The medaily-ai host is fixed at `https://ai.medaily.id.vn` (not editable in the popup).
+
+**Key encryption (optional):** in the popup, set a passphrase and click **Encrypt keys**. All keys move into one AES-GCM blob in `chrome.storage.local` (AES key derived with PBKDF2-SHA256, 600k iterations); the plaintext copies, including the synced `SERVICE_TOKEN`, are removed. **Unlock** keeps the decrypted keys in `chrome.storage.session` (memory only, not readable by content scripts) until the browser restarts, the extension reloads, or you click **Lock now**. A forgotten passphrase cannot be recovered — use **Delete all saved keys** and paste them again. Code: `shared/secrets.js`.
+
+Without encryption, Gemini/Claude keys are stored in `chrome.storage.local` (not synced) and read only by the service worker; content scripts ask `MEDAILY_KEY_STATUS` for presence. With these providers the agent uses native function calling — tool declarations live in `background/llm/tools.js`, and each step is stateless (goal + step history + fresh snapshot).
 
 A dedicated Copilot `userId` UUID is created automatically and stored in `chrome.storage.sync`. It is **not** your Medaily login id. Copilot calls a **separate** AI path that never uses the in-app assistant prompt, never files finance/plan notes, and never reads your Medaily ledger/goals tables.
 
@@ -57,7 +64,8 @@ The product app still uses `POST /api/chat/live` via its BFF — unchanged.
 ```
 manifest.json
 background/service-worker.js   # message router + storage bootstrap
-background/medaily-client.js   # live HTTP client
+background/medaily-client.js   # medaily-ai HTTP client
+background/llm/                # BYOK providers: gemini.js, anthropic.js, tools.js, index.js
 content/page-kit.js            # Pluggable extractors + composer insert/send
 content/chatbox.js             # Shadow DOM chat UI on every page
 content/chatbox.css            # Host-page isolation stub
@@ -69,7 +77,13 @@ icons/                         # Extension icons
 ## Modes
 
 - **Chat** — Ask / Tóm tắt / Gợi ý; FB-only Chèn·Gửi (site registry)
-- **Agent** — goal → medaily-ai `/api/extension/agent` → confirm → tools (click/type/…); see harness docs
+- **Agent** — goal → planner (medaily-ai `/api/extension/agent`, or Gemini/Claude tool calling) → confirm → tools (click/type/…)
+
+## Images (Gemini / Claude only)
+
+- **Chat:** paste (Ctrl+V), drag-and-drop, the 📎 button, or the 📷 button (screenshot of the visible tab with the panel hidden). Up to 4 images per question; downscaled to JPEG ≤1568px in `content/page-capture.js`. Images are not saved to History.
+- **Agent:** each planning step attaches a viewport screenshot (≤1280px) so the model can see dropdowns, date pickers and errors. Toggle in the popup ("Agent sends a screenshot each step").
+- medaily-ai does not accept images: Chat with images errors, Agent drops the screenshot.
 
 ## Page actions (Chat)
 

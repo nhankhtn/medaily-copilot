@@ -50,15 +50,71 @@
     return r.width > 2 && r.height > 2;
   }
 
+  function inViewport(el) {
+    const r = el.getBoundingClientRect();
+    return (
+      r.bottom > 0 &&
+      r.right > 0 &&
+      r.top < window.innerHeight &&
+      r.left < window.innerWidth
+    );
+  }
+
+  function textOf(node) {
+    return (node?.innerText || node?.textContent || "").replace(/\s+/g, " ").trim();
+  }
+
+  const FORM_ITEM_SELECTOR =
+    ".ant-form-item, .ant-row, .MuiFormControl-root, .form-group, .el-form-item, .v-input, [class*='form-item'], [class*='FormItem']";
+
+  /** Visible form label: <label for>, aria-labelledby, or the field wrapper's label (Ant/MUI/Bootstrap). */
+  function formLabelOf(el) {
+    const own = el.labels?.length ? textOf(el.labels[0]) : "";
+    if (own) return own;
+    const ids = (el.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean);
+    const byIds = ids.map((id) => textOf(document.getElementById(id))).join(" ").trim();
+    if (byIds) return byIds;
+    const item = el.closest(FORM_ITEM_SELECTOR);
+    const label = item?.querySelector("label, .ant-form-item-label, [class*='label']");
+    if (label && !label.contains(el)) return textOf(label);
+    return "";
+  }
+
   function labelOf(el) {
+    const field =
+      ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) ||
+      ["combobox", "textbox", "listbox", "spinbutton"].includes(el.getAttribute("role") || "");
     return (
       el.getAttribute("aria-label") ||
+      (field ? formLabelOf(el) : "") ||
       el.getAttribute("title") ||
       el.getAttribute("placeholder") ||
       el.getAttribute("name") ||
       el.getAttribute("data-placeholder") ||
-      (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 80)
-    );
+      // A <select>'s text is every option glued together — not a name.
+      (el.tagName === "SELECT" ? "" : textOf(el).slice(0, 80))
+    ).slice(0, 80);
+  }
+
+  /** Current value so the planner can see what is already filled. */
+  function valueOf(el) {
+    if (el.tagName === "SELECT") {
+      return textOf(el.selectedOptions?.[0]) || el.value || "";
+    }
+    if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
+      if ((el.type || "").toLowerCase() === "password") return el.value ? "***" : "";
+      if (["checkbox", "radio"].includes((el.type || "").toLowerCase())) {
+        return el.checked ? "checked" : "unchecked";
+      }
+      return el.value || "";
+    }
+    if (el.getAttribute("role") === "combobox") {
+      const shown = el.closest(".ant-select, [class*='select']")?.querySelector(
+        ".ant-select-selection-item, [class*='singleValue'], [class*='selection-item']"
+      );
+      return textOf(shown);
+    }
+    return "";
   }
 
   function contentEditableAttr(el) {
@@ -160,6 +216,10 @@
   function listInteractive(args = {}) {
     const limit = Math.min(Number(args.limit) || 40, 80);
     refMap = new Map();
+    // Drop refs from the previous snapshot so a stale "e3" can't match by attribute.
+    for (const old of document.querySelectorAll(`[${REF_ATTR}]`)) {
+      old.removeAttribute(REF_ATTR);
+    }
     const selector = [
       "a[href]",
       "button",
@@ -167,6 +227,11 @@
       "input:not([type=hidden])",
       "textarea",
       "select",
+      '[role="combobox"]',
+      '[role="option"]',
+      '[role="checkbox"]',
+      '[role="radio"]',
+      '[role="tab"]',
       '[contenteditable="true"]',
       '[contenteditable=""]',
       '[contenteditable="plaintext-only"]',
@@ -210,6 +275,9 @@
       nodes.push(target);
     }
 
+    // Elements on screen first, then the rest in DOM order (sort is stable).
+    nodes.sort((a, b) => Number(inViewport(b)) - Number(inViewport(a)));
+
     const items = [];
     let i = 0;
     for (const el of nodes) {
@@ -225,6 +293,7 @@
           el.getAttribute("role") ||
           (editable ? "textbox" : el.tagName.toLowerCase()),
         name: labelOf(el) || (editable ? "(composer)" : ""),
+        value: valueOf(el).slice(0, 60),
         type: el.getAttribute("type") || (editable ? "editable" : undefined),
         editable: Boolean(editable),
         css: cssPath(el).slice(0, 200),
@@ -233,7 +302,21 @@
     return { ok: true, count: items.length, elements: items };
   }
 
-  function resolveTarget(args = {}) {
+  /** Planners (esp. medaily-ai) name the target arg differently — fold aliases into ref/css/text. */
+  function normalizeTargetArgs(args = {}) {
+    const out = { ...args };
+    const refLike = out.ref ?? out.elementRef ?? out.element_ref ?? out.element ?? out.id ?? out.target;
+    if (!out.ref && refLike != null && /^e\d+$/.test(String(refLike).replace(/^\[|\]$/g, ""))) {
+      out.ref = String(refLike).replace(/^\[|\]$/g, "");
+    }
+    if (!out.css) out.css = out.selector ?? out.cssSelector ?? out.css_selector;
+    if (!out.text) out.text = out.label ?? out.field ?? out.name ?? out.textContent;
+    if (out.ref) out.ref = String(out.ref).replace(/^\[|\]$/g, "");
+    return out;
+  }
+
+  function resolveTarget(rawArgs = {}) {
+    const args = normalizeTargetArgs(rawArgs);
     let el = null;
     if (args.ref && refMap.has(String(args.ref))) {
       el = refMap.get(String(args.ref));
@@ -274,27 +357,86 @@
   /** Resolve + unwrap to a typeable control. */
   function resolveEditableTarget(args = {}) {
     const raw = resolveTarget(args);
-    let el = deepestEditable(raw);
-    if (!el && (!args || (!args.ref && !args.css && !args.text && !args.role))) {
-      el = deepestEditable(document.activeElement) || findChatComposerFallback();
+    const located = normalizeTargetArgs(args);
+    const hasLocator = Boolean(located.ref || located.css || located.text || located.role);
+    let el = raw?.tagName === "LABEL" && raw.control ? raw.control : deepestEditable(raw);
+    // Ref on a label / wrapper: look for the input inside the same form item.
+    if (!el && raw) {
+      el = deepestEditable(raw.closest(FORM_ITEM_SELECTOR)) || deepestEditable(raw.parentElement);
     }
-    if (!el && raw) el = deepestEditable(raw.parentElement) || findChatComposerFallback();
+    // No target given: the field the previous click focused.
+    if (!el && !hasLocator && document.activeElement !== document.body) {
+      el = deepestEditable(document.activeElement);
+    }
     if (!el) el = findChatComposerFallback();
     return el;
   }
 
+  /** For type, `text` is the value — never use it to find the field. */
+  function typeLocator(args = {}) {
+    const { text, value, content, input, ...locator } = args;
+    return locator;
+  }
+
+  function typedValue(args = {}) {
+    return args.text ?? args.value ?? args.content ?? args.input ?? "";
+  }
+
+  /** Why a type target failed, phrased so the planner can correct itself. */
+  function describeTypeFailure(args) {
+    const raw = resolveTarget(args);
+    if (!raw) {
+      return `No element matches ${JSON.stringify(args).slice(0, 160)} — use a ref from the snapshot`;
+    }
+    const role = raw.getAttribute("role") || raw.tagName.toLowerCase();
+    const hint =
+      raw.tagName === "SELECT"
+        ? "; use select_option"
+        : /combobox|listbox|button/.test(role)
+          ? "; it is a dropdown — click it, then click the option"
+          : "";
+    return `Target is <${raw.tagName.toLowerCase()} role=${role}> "${labelOf(raw)}", not a text input${hint}`;
+  }
+
   function click(args = {}) {
     const el = resolveTarget(args);
-    if (!el) return { ok: false, error: "Target not found for click" };
-    if (el.tagName === "A" && el.href) {
-      el.focus();
-      el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
-      if (typeof el.click === "function") el.click();
-      return { ok: true, method: "click", name: labelOf(el), css: cssPath(el) };
+    if (!el) {
+      return {
+        ok: false,
+        error: `Target not found for click (args=${JSON.stringify(args).slice(0, 160)}). Use a ref from the snapshot.`,
+      };
     }
+    // A native <select> can't be opened by script — steer the planner to select_option.
+    if (el.tagName === "SELECT") {
+      return {
+        ok: false,
+        error: `This is a native <select>; use select_option. Options: ${[...el.options]
+          .map((o) => textOf(o))
+          .filter(Boolean)
+          .join(" | ")
+          .slice(0, 400)}`,
+      };
+    }
+    el.scrollIntoView?.({ block: "center", inline: "nearest" });
+    const r = el.getBoundingClientRect();
+    const point = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      view: window,
+      clientX: r.left + r.width / 2,
+      clientY: r.top + r.height / 2,
+      button: 0,
+    };
+    // Many dropdown libraries open on pointerdown/mousedown, not click.
+    el.dispatchEvent(new PointerEvent("pointerdown", { ...point, pointerType: "mouse", isPrimary: true }));
+    el.dispatchEvent(new MouseEvent("mousedown", point));
     el.focus?.();
-    el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+    el.dispatchEvent(new PointerEvent("pointerup", { ...point, pointerType: "mouse", isPrimary: true }));
+    el.dispatchEvent(new MouseEvent("mouseup", point));
+    // Exactly one click — dispatching one and calling el.click() toggled dropdowns shut.
     if (typeof el.click === "function") el.click();
+    else el.dispatchEvent(new MouseEvent("click", point));
     return { ok: true, method: "click", name: labelOf(el), css: cssPath(el) };
   }
 
@@ -396,10 +538,11 @@
   }
 
   function typeInto(args = {}) {
-    const text = String(args.text ?? "");
-    const el = resolveEditableTarget(args);
+    const text = String(typedValue(args));
+    const locator = typeLocator(args);
+    const el = resolveEditableTarget(locator);
     if (!el || el === document.body) {
-      return { ok: false, error: "No input target for type" };
+      return { ok: false, error: describeTypeFailure(locator) };
     }
 
     const clear = args.clear !== false;
@@ -485,6 +628,34 @@
       el.dispatchEvent(evt);
     }
     return { ok: true, method: "press_key", key };
+  }
+
+  /** Native <select>: pick by option value or visible text. */
+  function selectOption(args = {}) {
+    const el = resolveTarget(args);
+    if (!el || el.tagName !== "SELECT") {
+      return {
+        ok: false,
+        error: "Target is not a native <select> — click the dropdown, then click the option",
+      };
+    }
+    const wanted = String(args.option ?? "").trim().toLowerCase();
+    const opt = [...el.options].find(
+      (o) => o.value.toLowerCase() === wanted || textOf(o).toLowerCase() === wanted
+    ) || [...el.options].find((o) => textOf(o).toLowerCase().includes(wanted));
+    if (!opt) {
+      return {
+        ok: false,
+        error: `No option "${args.option}". Options: ${[...el.options].map((o) => textOf(o)).join(" | ").slice(0, 300)}`,
+      };
+    }
+    el.focus?.();
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+    if (setter) setter.call(el, opt.value);
+    else el.value = opt.value;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return { ok: true, method: "select_option", selected: textOf(opt) };
   }
 
   function scroll(args = {}) {
@@ -606,7 +777,8 @@
       "",
       "Interactive:",
       ...listed.elements.map(
-        (e) => `- [${e.ref}] ${e.role} "${e.name}" css=${e.css}`
+        (e) =>
+          `- [${e.ref}] ${e.role} "${e.name}"${e.value ? ` value="${e.value}"` : ""} css=${e.css}`
       ),
       "",
       `Excerpt: ${excerpt}`,
@@ -622,6 +794,7 @@
   const MUTATING = new Set([
     "click",
     "type",
+    "select_option",
     "press_key",
     "insert_composer",
     "send_composer",
@@ -637,6 +810,8 @@
         return typeInto(args);
       case "press_key":
         return pressKey(args);
+      case "select_option":
+        return selectOption(args);
       case "scroll":
         return scroll(args);
       case "wait":
@@ -656,11 +831,15 @@
 
   function describeAction(action) {
     const tool = action?.tool || "?";
-    const args = action?.args || {};
+    const args = normalizeTargetArgs(action?.args || {});
+    const el = args.ref ? refMap.get(String(args.ref)) : null;
+    const field = el ? labelOf(el) : "";
+    const value =
+      tool === "type" ? typedValue(args) : tool === "select_option" ? args.option : "";
     const target =
-      args.ref ||
-      args.css ||
-      args.text ||
+      [field || args.ref || args.css || (tool === "type" ? "" : args.text), value && `← "${value}"`]
+        .filter(Boolean)
+        .join(" ") ||
       args.key ||
       (tool === "send_composer" ? "(composer send)" : "") ||
       "";

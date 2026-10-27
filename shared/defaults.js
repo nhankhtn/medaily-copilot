@@ -14,6 +14,18 @@ export const DEFAULT_SETTINGS = {
   launcherHidden: false,
   /** Panel composer mode: "chat" | "agent". */
   panelMode: "chat",
+  /** Model backend: "medaily" (via ai.medaily.id.vn) | "gemini" | "anthropic" (direct, BYOK). */
+  provider: "medaily",
+  geminiModel: "gemini-3.5-flash-lite",
+  anthropicModel: "claude-haiku-5-5",
+  /** Agent attaches a viewport screenshot to each planning step (Gemini/Claude only). */
+  agentScreenshots: true,
+};
+
+/** BYOK keys — chrome.storage.local only (not synced), read by the service worker. */
+export const DEFAULT_LOCAL_SECRETS = {
+  geminiApiKey: "",
+  anthropicApiKey: "",
 };
 
 /**

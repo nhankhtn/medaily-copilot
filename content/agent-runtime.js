@@ -4,16 +4,25 @@
  */
 (() => {
   const MAX_STEPS = 15;
+  const SNAPSHOT_ELEMENTS = 50;
+  const RESULT_CHARS = 1500;
+  const HISTORY_LINES = 16;
+  /** Set field values without changing layout — later refs in the same plan stay valid. */
+  const VALUE_ONLY = new Set(["type", "select_option", "insert_composer"]);
 
   /** @type {null | {
    *   setStatus: (s: string) => void,
    *   appendLog: (line: string, kind?: string) => void,
-   *   askConfirm: (desc: {tool:string,target:string,reason:string,step:number,max:number}) => Promise<"approve"|"skip"|"stop">,
+   *   askConfirm: (desc: {tool:string,target:string,reason:string,step:number,max:number}) => Promise<"approve"|"approve_all"|"skip"|"stop">,
    *   onDone: (summary: string) => void,
    * }} */
   let ui = null;
   let running = false;
   let abort = false;
+  /** User chose "Approve all" — skip confirms for this run except send_composer. */
+  let approveAll = false;
+  /** Last snapshot text sent to the planner — shown by the panel's context viewer. */
+  let lastSnapshot = "";
 
   function attach(hooks) {
     ui = hooks;
@@ -25,6 +34,36 @@
 
   function isRunning() {
     return running;
+  }
+
+  /** Planner provider, and whether to attach screenshots (BYOK only; medaily-ai ignores them). */
+  async function readRunConfig() {
+    try {
+      const status = await chrome.runtime.sendMessage({ type: "MEDAILY_KEY_STATUS" });
+      const provider = status?.ok ? status.provider : "unknown";
+      const { agentScreenshots } = await chrome.storage.sync.get({ agentScreenshots: true });
+      const vision =
+        provider !== "medaily" &&
+        provider !== "unknown" &&
+        Boolean(agentScreenshots) &&
+        Boolean(globalThis.MedailyCapture);
+      return { provider, vision };
+    } catch {
+      return { provider: "unknown", vision: false };
+    }
+  }
+
+  async function captureStep() {
+    try {
+      const shot = await globalThis.MedailyCapture.captureVisible({
+        maxSide: 1280,
+        quality: 0.7,
+      });
+      return { mimeType: shot.mimeType, data: shot.data };
+    } catch (err) {
+      ui?.appendLog?.(`Screenshot skipped: ${err?.message || err}`, "system");
+      return undefined;
+    }
   }
 
   async function planTurn(payload) {
@@ -57,26 +96,35 @@
 
     running = true;
     abort = false;
+    approveAll = false;
     const caps = globalThis.MedailySiteRegistry?.getCapabilities?.() || {};
     /** @type {string[]} */
     const historyLines = [];
     let step = 0;
+    const { provider, vision } = await readRunConfig();
 
     ui?.setStatus?.("Agent starting…");
+    ui?.appendLog?.(
+      `v${chrome.runtime.getManifest().version} · planner: ${provider} · screenshots: ${vision ? "on" : "off"}`,
+      "system"
+    );
     ui?.appendLog?.(`Goal: ${goal}`, "user");
 
     try {
       while (step < MAX_STEPS && !abort) {
         step += 1;
         ui?.setStatus?.(`Perceive · step ${step}/${MAX_STEPS}`);
-        const snap = tools.buildSnapshot(35);
+        const snap = tools.buildSnapshot(SNAPSHOT_ELEMENTS);
+        const screenshot = vision ? await captureStep() : undefined;
+        lastSnapshot = `${snap.text}${screenshot ? "\n\n[+ viewport screenshot attached]" : ""}`;
 
         ui?.setStatus?.(`Plan · step ${step}/${MAX_STEPS}`);
         const plan = await planTurn({
           goal,
           pageSnapshot: snap.text,
-          toolHistory: historyLines.slice(-12).join("\n") || undefined,
+          toolHistory: historyLines.slice(-HISTORY_LINES).join("\n") || undefined,
           caps: { insert: Boolean(caps.insert), send: Boolean(caps.send) },
+          screenshot,
         });
 
         if (plan.assistantMessage) {
@@ -97,12 +145,11 @@
 
         for (const action of actions) {
           if (abort) break;
-          if (step > MAX_STEPS) break;
 
           const desc = tools.describeAction(action);
           const mutating = tools.isMutating(action.tool);
 
-          if (mutating) {
+          if (mutating && !(approveAll && action.tool !== "send_composer")) {
             ui?.setStatus?.(`Confirm · ${action.tool}`);
             const decision = await ui?.askConfirm?.({
               ...desc,
@@ -113,6 +160,10 @@
               abort = true;
               ui?.appendLog?.("Stopped by user.", "system");
               break;
+            }
+            if (decision === "approve_all") {
+              approveAll = true;
+              ui?.appendLog?.("Auto-approving the rest of this run (except send).", "system");
             }
             if (decision === "skip") {
               historyLines.push(
@@ -137,7 +188,7 @@
           }
 
           const summary = result?.ok
-            ? JSON.stringify(result).slice(0, 500)
+            ? JSON.stringify(result).slice(0, RESULT_CHARS)
             : `ERROR: ${result?.error || "failed"}`;
           historyLines.push(
             `${action.tool}(${JSON.stringify(action.args || {}).slice(0, 120)}) → ${summary}`
@@ -147,9 +198,12 @@
             result?.ok ? "ok" : "err"
           );
 
-          // After a mutating act, re-perceive on next outer loop.
-          if (mutating) {
-            step += 0; // keep step; break inner to replan
+          // After a mutating act the page changed; after list_interactive the
+          // refs were renumbered. Either way the rest of this plan is stale.
+          if (
+            (mutating && !VALUE_ONLY.has(action.tool)) ||
+            action.tool === "list_interactive"
+          ) {
             break;
           }
         }
@@ -182,6 +236,7 @@
     run,
     stop,
     isRunning,
+    getLastSnapshot: () => lastSnapshot,
     MAX_STEPS,
   };
 })();

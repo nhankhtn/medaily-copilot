@@ -94,7 +94,7 @@ export async function clearMedailyThread() {
 }
 
 /** Prior turns for the extension endpoint (excludes the latest user message). */
-function buildHistory(messages) {
+export function buildHistory(messages) {
   const list = Array.isArray(messages) ? messages : [];
   const prior = list.slice(0, -1).slice(-8);
   return prior
@@ -112,8 +112,9 @@ function buildHistory(messages) {
 /**
  * Page ground truth FIRST, then the question (API allows 4000 on extension path).
  * Packs kind / subject / thread when extractors find them (FB, Gmail, etc.).
+ * BYOK providers pass a larger totalCap since there is no server-side limit.
  */
-function buildApiMessage(payload, maxPageTextChars) {
+export function buildApiMessage(payload, maxPageTextChars, totalCap = 4000) {
   const lastUser = [...(payload.messages || [])]
     .reverse()
     .find((m) => m.role === "user");
@@ -148,10 +149,10 @@ function buildApiMessage(payload, maxPageTextChars) {
 
   const prefix = [instruction, "", ...pageLines, ""].join("\n");
   const questionBlock = `[User question]\n${question}`;
-  const remaining = Math.max(0, 4000 - prefix.length - questionBlock.length - 40);
+  const remaining = Math.max(0, totalCap - prefix.length - questionBlock.length - 40);
   const budget = Math.min(
     remaining,
-    Math.max(120, Number(maxPageTextChars) || 4000)
+    Math.max(120, Number(maxPageTextChars) || totalCap)
   );
 
   if (thread && budget > 40) {
@@ -160,7 +161,7 @@ function buildApiMessage(payload, maxPageTextChars) {
     pageLines.push(`Excerpt: ${pageText.slice(0, budget)}`);
   }
 
-  return [instruction, "", ...pageLines, "", questionBlock].join("\n").slice(0, 4000);
+  return [instruction, "", ...pageLines, "", questionBlock].join("\n").slice(0, totalCap);
 }
 
 /**
